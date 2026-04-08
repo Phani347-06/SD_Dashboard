@@ -36,5 +36,6 @@ void setup() {
 
 void loop() {
   // Beacons do not require loop execution unless pulsing dynamic data
+  Serial.println("Beacon is actively broadcasting...");
   delay(2000);
 }
