@@ -25,10 +25,7 @@ void setup() {
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
-  
-  // Settings to optimize for rapid discovery without pairing
-  pAdvertising->setMinPreferred(0x06);  
-  pAdvertising->setMinPreferred(0x12);
+  pAdvertising->setMinPreferred(0x0);  // set value to 0x00 to not advertise this parameter
   
   BLEDevice::startAdvertising();
   Serial.println("Beacon is active. Awaiting Student App discovery...");
