@@ -118,9 +118,6 @@ export default function AttendancePage() {
         setStatus('SEARCHING_BEACON');
         setErrorMessage(null);
 
-        // Simulation delay for immersion
-        await new Promise(r => setTimeout(r, 2000));
-
         if (isTestMode) {
             setActiveSession({ 
                 id: 'test-session-manifest-001', 
@@ -130,21 +127,38 @@ export default function AttendancePage() {
             return;
         }
 
-        const { data: sessions, error } = await supabase
-            .from('class_sessions')
-            .select('id, course_code')
-            .eq('lab_id', selectedLab.id)
-            .eq('status', 'ACTIVE')
-            .maybeSingle();
+        try {
+            // Step 1: HARDWARE PROXIMITY VERIFICATION
+            // This strictly locks attendance to physical ESP32 proximity. Proxies blocked.
+            if (!navigator.bluetooth) {
+                throw new Error("Web Bluetooth API is restricted. Cannot verify physical presence.");
+            }
+            
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{ services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] }]
+            });
 
-        if (error || !sessions) {
-            setErrorMessage(`No Institutional Beacon detected for ${selectedLab.name}. Verify the session is active with your Lead.`);
-            setStatus('LAB_SELECT');
-            return;
+            // Step 2: Faculty Matrix Validation (Database)
+            const { data: sessions, error } = await supabase
+                .from('class_sessions')
+                .select('id, course_code')
+                .eq('lab_id', selectedLab.id)
+                .eq('status', 'ACTIVE')
+                .maybeSingle();
+
+            if (error || !sessions) {
+                setErrorMessage(`Hardware detected, but no digital class session active for ${selectedLab.name}.`);
+                setStatus('LAB_SELECT');
+                return;
+            }
+
+            setActiveSession(sessions);
+            setStatus('BEACON_LOCKED');
+        } catch (err: any) {
+             console.error("Proximity Check Failed:", err);
+             setErrorMessage(err.message || "Failed to detect Hardware ESP32 Beacon. Move closer to the classroom node.");
+             setStatus('LAB_SELECT');
         }
-
-        setActiveSession(sessions);
-        setStatus('BEACON_LOCKED');
     };
 
     // 3. Scanner Protocol
