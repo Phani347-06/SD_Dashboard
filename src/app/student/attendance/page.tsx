@@ -135,7 +135,8 @@ export default function AttendancePage() {
             }
             
             const device = await navigator.bluetooth.requestDevice({
-                filters: [{ services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] }]
+                acceptAllDevices: true,
+                optionalServices: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c']
             });
 
             // Step 2: Faculty Matrix Validation (Database)
