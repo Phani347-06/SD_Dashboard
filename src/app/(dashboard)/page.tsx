@@ -29,6 +29,7 @@ import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRouter } from "next/navigation";
+import BeaconMonitorWidget from "@/app/(dashboard)/components/BeaconMonitorWidget";
 
 interface DashboardStats {
   totalLabs: number;
@@ -348,6 +349,11 @@ export default function Dashboard() {
         </div>
 
       </div>
+
+      {/* 5. Beacon Network Status Monitor */}
+      <motion.div variants={itemVariants}>
+        <BeaconMonitorWidget />
+      </motion.div>
 
       {/* Alert Detail Modal */}
       <AnimatePresence>

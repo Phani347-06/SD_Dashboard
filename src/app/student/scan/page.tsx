@@ -7,6 +7,31 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useSecurity } from '@/context/SecurityContext';
 
+// Web Bluetooth API Type Definitions
+interface BluetoothRequestDeviceOptions {
+  services?: string[];
+  filters?: BluetoothLEScanFilter[];
+}
+
+interface BluetoothLEScanFilter {
+  services?: string[];
+}
+
+interface BluetoothDevice {
+  id: string;
+  name: string;
+}
+
+interface BluetoothApi {
+  requestDevice(options: BluetoothRequestDeviceOptions): Promise<BluetoothDevice>;
+}
+
+declare global {
+  interface Navigator {
+    bluetooth?: BluetoothApi;
+  }
+}
+
 export default function StudentScanPage() {
   const [status, setStatus] = useState<'IDLE' | 'BEACON_SEARCH' | 'SCANNING' | 'VERIFYING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [beaconFound, setBeaconFound] = useState(false);

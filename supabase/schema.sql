@@ -56,6 +56,27 @@ CREATE TABLE public.attendance_logs (
     final_status VARCHAR(20) DEFAULT 'PENDING'
 );
 
+-- 5. Beacon Telemetry (ESP32 iBeacon Status Tracking)
+CREATE TABLE public.beacon_telemetry (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    beacon_id VARCHAR(100) UNIQUE NOT NULL,  -- e.g., "beacon-lab-room-1-station-1"
+    major_id INTEGER NOT NULL,                -- iBeacon Major ID (Lab Room)
+    minor_id INTEGER NOT NULL,                -- iBeacon Minor ID (Station)
+    uuid VARCHAR(50) NOT NULL,                -- iBeacon UUID
+    status VARCHAR(20) DEFAULT 'ACTIVE',      -- 'ACTIVE' or 'INACTIVE'
+    uptime_seconds BIGINT,                    -- Beacon uptime since boot
+    wifi_rssi INTEGER,                        -- WiFi signal strength (dBm)
+    ip_address INET,                          -- Last known IP address
+    last_heartbeat TIMESTAMP WITH TIME ZONE,  -- Last received heartbeat
+    raw_data JSONB,                           -- Full telemetry payload
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create index for beacon_id lookups (frequent queries)
+CREATE INDEX idx_beacon_id ON public.beacon_telemetry(beacon_id);
+CREATE INDEX idx_last_heartbeat ON public.beacon_telemetry(last_heartbeat DESC);
+
 -- Important Security Notes:
 -- Enabling Row Level Security (RLS) policies 
 -- could be added here to restrict API key access based on User Auth
