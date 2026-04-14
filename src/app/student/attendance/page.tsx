@@ -163,11 +163,11 @@ export default function AttendancePage() {
             }
             
             // Log for debugging
-            console.log("Starting BLE Scan. Target Prefix: 'Lab Beacon', Service:", 'b5c879b2-3be9-450f-90e7-ecad1d7d242c');
+            console.log("Starting BLE Scan. Target Prefix: 'LabBeacon', Service:", 'b5c879b2-3be9-450f-90e7-ecad1d7d242c');
             
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
-                    { namePrefix: 'Lab Beacon' },
+                    { namePrefix: 'LabBeacon' },
                     { services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] }
                 ],
                 optionalServices: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c']
@@ -175,14 +175,16 @@ export default function AttendancePage() {
 
             // Step 2: Faculty Matrix Validation (Database)
             console.log("🔍 Checking Sessions for Lab:", selectedLab.id, "Name:", selectedLab.name);
-            const { data: sessions, error } = await supabase
+            const { data: sessionList, error } = await supabase
                 .from('class_sessions')
                 .select('id, course_code, status')
                 .eq('lab_id', selectedLab.id)
-                .in('status', ['ACTIVE', 'COMPLETED']) // Check for COMPLETED too just in case it was just closed
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .maybeSingle();
+                .in('status', ['ACTIVE', 'COMPLETED'])
+                .order('status', { ascending: true }) // Prioritize ACTIVE (A) over COMPLETED (C)
+                .order('date', { ascending: false })   // Then most recent
+                .limit(1);
+
+            const sessions = sessionList && sessionList.length > 0 ? sessionList[0] : null;
 
             if (error || !sessions) {
                 console.warn("⚠️ No Session Found in Matrix:", error);
@@ -270,8 +272,9 @@ export default function AttendancePage() {
             if (scannerRef.current) await scannerRef.current.pause(true);
             const data = JSON.parse(decodedText);
             
-            // Verify lab ID in QR matches selected lab (unless in test mode)
-            if (!isTestMode && data.lab_id !== selectedLab?.id) {
+            // Verify session ID in QR matches the local active session
+            if (!isTestMode && data.s_id !== activeSession?.id) {
+                console.warn("Mismatched Session ID. Expected:", activeSession?.id, "Got:", data.s_id);
                 throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
             }
 
@@ -304,9 +307,10 @@ export default function AttendancePage() {
                     'x-fingerprint': fingerprintHash
                 },
                 body: JSON.stringify({
-                    class_session_id: activeSession.id,
-                    temp_qr_id: qrData.temp_session_id,
-                    verification_code: qrData.verification_code
+                    s_id: qrData.s_id,
+                    t_id: qrData.t_id,
+                    v_code: qrData.v_code,
+                    beacon_status: 'CONNECTED' // Hardcoded here as we've already passed the proximity gate
                 })
             });
 
