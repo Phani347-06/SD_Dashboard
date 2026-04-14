@@ -93,10 +93,11 @@ export async function POST(req: Request) {
 
     if (qrError || !qrSession) {
       console.log("ATTENDANCE_DEBUG: Laboratory QR Signature Mismatch.", {
-         qr_token_id: mask(qr_token_id),
-         class_session_id,
-         v_code_final: mask(v_code_final),
-         db_error: qrError?.message
+         input_qr_token_id: qr_token_id,
+         input_class_session_id: class_session_id,
+         input_v_code: v_code_final,
+         db_error: qrError?.message,
+         hint: "Verify if this (temp_session_id + class_session_id) exists and is_active=true in temp_qr_sessions table."
       });
       return NextResponse.json({ error: 'Laboratory QR Signature Mismatch or Session has Expired.' }, { status: 400 });
     }

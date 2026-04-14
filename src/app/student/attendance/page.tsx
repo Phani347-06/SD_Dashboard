@@ -140,6 +140,29 @@ export default function AttendancePage() {
     }, [router, searchParams]);
 
     // 2. Beacon Manifestation - Searching for Active Laboratory Sessions
+    const syncActiveSession = async () => {
+        if (!selectedLab) return null;
+        try {
+            const { data: sessionList, error } = await supabase
+                .from('class_sessions')
+                .select('id, course_code, status')
+                .eq('lab_id', selectedLab.id)
+                .in('status', ['ACTIVE', 'COMPLETED'])
+                .order('status', { ascending: true })
+                .order('date', { ascending: false })
+                .limit(1);
+
+            const sessions = sessionList && sessionList.length > 0 ? sessionList[0] : null;
+            if (sessions && !error) {
+                setActiveSession(sessions);
+                return sessions;
+            }
+        } catch (err) {
+            console.error("Sync Failure:", err);
+        }
+        return null;
+    };
+
     const startBeaconSearch = async () => {
         if (!selectedLab) return;
         setStatus('SEARCHING_BEACON');
@@ -195,19 +218,9 @@ export default function AttendancePage() {
 
             // Step 3: Faculty Matrix Validation (Database)
             console.log("🔍 Checking Sessions for Lab:", selectedLab.id, "Name:", selectedLab.name);
-            const { data: sessionList, error } = await supabase
-                .from('class_sessions')
-                .select('id, course_code, status')
-                .eq('lab_id', selectedLab.id)
-                .in('status', ['ACTIVE', 'COMPLETED'])
-                .order('status', { ascending: true }) // Prioritize ACTIVE (A) over COMPLETED (C)
-                .order('date', { ascending: false })   // Then most recent
-                .limit(1);
+            const sessions = await syncActiveSession();
 
-            const sessions = sessionList && sessionList.length > 0 ? sessionList[0] : null;
-
-            if (error || !sessions) {
-                console.warn("⚠️ No Session Found in Matrix:", error);
+            if (!sessions) {
                 setErrorMessage(`Hardware detected, but no digital class session active for ${selectedLab.name}. Ensure Faculty has 'Started Session'.`);
                 setStatus('LAB_SELECT');
                 return;
@@ -220,7 +233,6 @@ export default function AttendancePage() {
             }
 
             console.log("✅ Digital Session Locked:", sessions.id);
-            setActiveSession(sessions);
             setStatus('BEACON_LOCKED');
         } catch (err: unknown) {
             console.error("Proximity Check Failed:", err);
@@ -355,7 +367,12 @@ export default function AttendancePage() {
             }
 
             if (!isTestMode && data.s_id !== activeSession?.id) {
-                throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
+                console.warn("Matrix Mismatch: Attempting Background Recovery...");
+                const recovered = await syncActiveSession();
+                if (!recovered || recovered.id !== data.s_id) {
+                    throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
+                }
+                console.log("Matrix Recovery: Handshake Resynchronized.");
             }
 
             // 🚀 UPI Refinement: OPTIMISTIC TRANSITION

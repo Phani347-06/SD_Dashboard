@@ -361,7 +361,12 @@ export default function AttendancePage() {
              <div className="w-56 h-56 bg-white border border-slate-100 rounded-[40px] mb-10 flex items-center justify-center p-6 shadow-2xl shadow-blue-900/5 relative z-10 group-hover:scale-105 transition-transform duration-500">
                 <div className="w-full h-full bg-slate-50 rounded-[30px] flex items-center justify-center flex-col p-4 relative overflow-hidden border border-slate-100">
                    {session && tempSession ? (
-                     !tempSession.is_active ? (
+                     (!session.id || !tempSession.temp_session_id) ? (
+                       <div className="flex flex-col items-center animate-pulse">
+                          <Loader2 size={32} className="text-[#0052a5] animate-spin mb-3" />
+                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center px-2">Synchronizing Node...</p>
+                       </div>
+                     ) : !tempSession.is_active ? (
                         <div className="flex flex-col items-center animate-pulse">
                            <Pause size={48} className="text-amber-500 mb-3" fill="currentColor" />
                            <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest leading-none">Matrix Disconnected</p>
@@ -538,7 +543,7 @@ export default function AttendancePage() {
        </div>
 
        {/* Fullscreen QR Matrix Expansion Overlay */}
-       {isQrZoomed && session && tempSession?.is_active && (
+       {isQrZoomed && session?.id && tempSession?.temp_session_id && tempSession?.is_active && (
          <div 
            className="fixed inset-0 z-[1000] flex items-center justify-center animate-in fade-in zoom-in duration-300 p-8 md:p-12 overflow-hidden"
          >
