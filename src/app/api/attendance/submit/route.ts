@@ -12,6 +12,14 @@ const mask = (val: any, visible: number = 4) => {
   if (str.length <= visible * 2) return str;
   return `${str.slice(0, visible)}...${str.slice(-visible)}`;
 };
+
+const isSessionUsable = (session: { is_active?: boolean | null; expires_at?: string | null } | null) => {
+  if (!session) return false;
+  if (session.is_active === false) return false;
+  if (!session.expires_at) return false;
+  return new Date(session.expires_at) >= new Date();
+};
+
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -84,7 +92,7 @@ export async function POST(req: Request) {
 
     // Recovery path: if the browser is holding a stale temp_session_id, prefer the latest
     // non-expired node on the same fingerprint rather than failing the QR as invalid.
-    if (!session && fingerprint_hash) {
+    if ((!session || !isSessionUsable(session)) && fingerprint_hash) {
       let latestFingerprintQuery = await db
         .from('sessions')
         .select('*, students(*)')
@@ -107,7 +115,9 @@ export async function POST(req: Request) {
           .maybeSingle();
       }
 
-      session = latestFingerprintQuery.data;
+      if (latestFingerprintQuery.data) {
+        session = latestFingerprintQuery.data;
+      }
       sessionError = latestFingerprintQuery.error ?? sessionError;
 
       if (session) {
@@ -220,7 +230,7 @@ export async function POST(req: Request) {
     const { error: updateError } = await supabase
       .from('sessions')
       .update({ attendance_submitted: true })
-      .eq('temp_session_id', temp_session_id);
+      .eq('temp_session_id', session.temp_session_id);
 
     if (updateError) {
        console.log("ATTENDANCE_DEBUG: Session Update Failure. Rolling back log record...");
