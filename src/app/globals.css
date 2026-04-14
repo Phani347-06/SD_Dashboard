@@ -61,3 +61,10 @@ button, a, .interactive-node {
 .custom-scrollbar-light::-webkit-scrollbar-thumb:hover {
   background: #0052a5;
 }
+
+/* 📷 Matrix Optic Node Overrides */
+#reader video, 
+#attendance-reader video {
+  object-fit: contain !important;
+  background: black !important;
+}

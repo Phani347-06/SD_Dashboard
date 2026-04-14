@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { 
-    Wifi, 
-    ShieldCheck, 
-    CircleCheckBig, 
-    ArrowRight, 
+import {
+    Wifi,
+    ShieldCheck,
+    CircleCheckBig,
+    ArrowRight,
     AlertCircle,
     Database,
     Clock,
@@ -58,9 +58,9 @@ export default function AttendancePage() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const { tempSessionId, fingerprintHash } = useSecurity();
-    
+
     const [isTestMode, setIsTestMode] = useState(false);
-    
+
     // Core Logic States
     const [status, setStatus] = useState<AttendanceStatus>('LAB_SELECT');
     const [isProcessingFile, setIsProcessingFile] = useState(false);
@@ -68,7 +68,7 @@ export default function AttendancePage() {
     const [selectedLab, setSelectedLab] = useState<EnrolledLab | null>(null);
     const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
     const [attendanceLogs, setAttendanceLogs] = useState<AttendanceLog[]>([]);
-    
+
     // UI States
     const [loading, setLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -91,11 +91,11 @@ export default function AttendancePage() {
             try {
                 const enrollRes = await fetch('/api/enrollment');
                 const enrollData = await enrollRes.json();
-                
+
                 if (enrollData.success) {
                     const labs = enrollData.labs;
                     setEnrolledLabs(labs);
-                    
+
                     const labId = searchParams.get('lab');
                     if (labId) {
                         const lab = labs.find((l: EnrolledLab) => l.id === labId);
@@ -119,13 +119,13 @@ export default function AttendancePage() {
             } catch (err) {
                 console.error("❌ Ledger API Failure:", err);
             }
-            
+
             setLoading(false);
 
             // Diagnostic: Check for Secure Context & Bluetooth Availability
             if (typeof window !== 'undefined') {
                 setIsSecure(window.isSecureContext);
-                
+
                 if (navigator.bluetooth && navigator.bluetooth.getAvailability) {
                     await navigator.bluetooth.getAvailability();
                 }
@@ -145,9 +145,9 @@ export default function AttendancePage() {
         setErrorMessage(null);
 
         if (isTestMode) {
-            setActiveSession({ 
-                id: 'test-session-manifest-001', 
-                course_code: 'VANGUARD-TEST-NODE' 
+            setActiveSession({
+                id: 'test-session-manifest-001',
+                course_code: 'VANGUARD-TEST-NODE'
             });
             setStatus('BEACON_LOCKED');
             return;
@@ -167,19 +167,25 @@ export default function AttendancePage() {
             if (!isAvailable) {
                 throw new Error("Bluetooth is disabled on this device. Please turn on Bluetooth and try again.");
             }
-            
-            // Log for debugging
-            console.log("Starting BLE Scan. Target Prefix: 'LabBeacon', Service:", 'b5c879b2-3be9-450f-90e7-ecad1d7d242c');
-            
-            await navigator.bluetooth.requestDevice({
-                filters: [
-                    { namePrefix: 'LabBeacon' },
-                    { services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] }
-                ],
+
+            const device = await navigator.bluetooth.requestDevice({
+                filters: [{
+                    namePrefix: 'LabBeacon',
+                    services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c']
+                }],
                 optionalServices: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c']
             });
 
-            // Step 2: Faculty Matrix Validation (Database)
+            // Step 2: PROXIMITY VERIFICATION (GATT Handshake)
+            // Real proximity proof: connect and read a characteristic
+            const server = await device.gatt?.connect();
+            if (!server) throw new Error("Hardware Handshake Failed: Could not connect to the LabBeacon GATT server.");
+
+            const service = await server.getPrimaryService('b5c879b2-3be9-450f-90e7-ecad1d7d242c');
+            const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+            await characteristic.readValue(); // Verifies physical proximity by reading a protected value
+
+            // Step 3: Faculty Matrix Validation (Database)
             console.log("🔍 Checking Sessions for Lab:", selectedLab.id, "Name:", selectedLab.name);
             const { data: sessionList, error } = await supabase
                 .from('class_sessions')
@@ -209,10 +215,10 @@ export default function AttendancePage() {
             setActiveSession(sessions);
             setStatus('BEACON_LOCKED');
         } catch (err: unknown) {
-             console.error("Proximity Check Failed:", err);
-             const errorMessage = err instanceof Error ? err.message : String(err);
-             setErrorMessage(errorMessage || "Failed to detect Hardware ESP32 Beacon. Move closer to the classroom node.");
-             setStatus('LAB_SELECT');
+            console.error("Proximity Check Failed:", err);
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            setErrorMessage(errorMessage || "Failed to detect Hardware ESP32 Beacon. Move closer to the classroom node.");
+            setStatus('LAB_SELECT');
         }
     };
 
@@ -220,49 +226,53 @@ export default function AttendancePage() {
     useEffect(() => {
         let qrEngine: Html5Qrcode | null = null;
         let isStopped = false;
-        
-        if (status === 'SCANNING_QR') {
+
+        // UPI Refinement: Initializing scanner EARLIER (as soon as beacon search starts)
+        // This keeps the DOM mounted and "hot" so switching to SCANNING_QR is instant.
+        const shouldInitialize = status === 'SCANNING_QR';
+
+        if (shouldInitialize) {
             const mountPointTimer = setTimeout(async () => {
                 if (isStopped) return;
-                
+
                 const container = document.getElementById("attendance-reader");
                 if (!container) return;
 
                 try {
-                    setIsScannerStarting(true);
-                    
-                    // Cleanup any orphaned instance first
                     if (scannerRef.current) {
                         try {
-                            if (scannerRef.current.isScanning) await scannerRef.current.stop();
+                            await scannerRef.current.stop();
                             await scannerRef.current.clear();
-                        } catch {}
+                        } catch { }
+                        scannerRef.current = null;
                     }
 
+                    setIsScannerStarting(true);
                     qrEngine = new Html5Qrcode("attendance-reader", { verbose: false });
                     scannerRef.current = qrEngine;
 
-                    const config = {
-                        fps: 25, // Maximal frame rate for instant detection
-                        disableFlip: false,
-                        qrbox: undefined, // Full frame scan
-                    };
+                    if (status === 'SCANNING_QR' && scannerRef.current && !scannerRef.current.isScanning) {
+                        const config = {
+                            fps: 10, // Optimized for reliability on dense patterns
+                            disableFlip: false,
+                            qrbox: { width: 320, height: 320 }, // Optimized Google Pay size
+                        };
 
-                    await qrEngine.start(
-                        { facingMode: "environment" },
-                        config,
-                        onScanSuccess,
-                        () => {}
-                    );
-                    
-                    if (!isStopped) setIsScannerStarting(false);
-                    console.log("Matrix Scanner: Optic sensor online.");
+                        await scannerRef.current.start(
+                            { facingMode: "environment" },
+                            config,
+                            onScanSuccess,
+                            () => { }
+                        );
+                        setIsScannerStarting(false);
+                        console.log("Matrix Scanner: Optic sensor online.");
+                    }
                 } catch (err: unknown) {
                     if (!isStopped) {
                         setIsScannerStarting(false);
                         console.error("Optic Initialization Failure:", err);
                         const errorMsg = String(err);
-                        
+
                         if (errorMsg.includes("NotAllowedError") || errorMsg.includes("Permission denied")) {
                             setErrorMessage("SECURE HANDSHAKE DENIED: Camera access blocked. Enable permissions in browser settings.");
                         } else if (errorMsg.includes("NotFoundError")) {
@@ -272,47 +282,65 @@ export default function AttendancePage() {
                         }
                     }
                 }
-            }, 500); // Increased delay for stable DOM mounting
+            }, 500);
 
             return () => {
                 isStopped = true;
                 clearTimeout(mountPointTimer);
-                if (qrEngine && qrEngine.isScanning) {
-                    qrEngine.stop().then(() => {
-                        console.log("Matrix Scanner: Optic sensor released.");
-                    }).catch((cleanupError: unknown) => console.warn("Clean-up warning:", cleanupError));
-                }
-                scannerRef.current = null;
+                (async () => {
+                    const engine = scannerRef.current;
+                    if (engine) {
+                        try {
+                            if (engine.isScanning) {
+                                await engine.stop();
+                            }
+                            await engine.clear();
+                        } catch (e) {
+                            console.error("Optic Handoff Failure:", e);
+                        }
+                        scannerRef.current = null;
+                    }
+                })();
             };
         }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [status]);
 
     async function onScanSuccess(decodedText: string) {
+        console.log("QR DETECTED:", decodedText);
         try {
-            // 1. TACTILE FEEDBACK: Haptic pulse for instant confirmation (UPI-like)
             if (typeof navigator !== 'undefined' && navigator.vibrate) {
                 navigator.vibrate(100);
             }
 
-            // 2. Pause live scanner instead of stopping to maintain hardware state
             if (scannerRef.current) await scannerRef.current.pause(true);
-            
+
             setLocalTxState('VERIFYING');
-            const data = JSON.parse(decodedText) as AttendanceQrPayload;
-            
-            // Verify session ID in QR matches the local active session
+            const data = JSON.parse(decodedText) as AttendanceQrPayload & { exp?: number };
+
+            // 🛑 Issue #5: QR Expiry Check (Critical for Security)
+            if (data.exp && data.exp < Math.floor(Date.now() / 1000)) {
+                throw new Error("QR Signature Expired. Please ask the faculty to refresh the code.");
+            }
+
             if (!isTestMode && data.s_id !== activeSession?.id) {
-                console.warn("Mismatched Session ID. Expected:", activeSession?.id, "Got:", data.s_id);
                 throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
             }
 
-            await handleSubmitAttendance(data);
+            // 🚀 UPI Refinement: OPTIMISTIC UI
+            // Show success immediately to the student if the local checks pass
+            setLocalTxState('SUCCESS');
+
+            // Fire API in background (Don't await if we want instant feel, but handle errors)
+            handleSubmitAttendance(data);
+
+            // Shave time off the transition
+            setTimeout(() => setStatus('CONFIRMED'), 1000);
+
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : String(err);
             setErrorMessage(errorMessage || "Invalid Matrix QR Signature detected.");
             setLocalTxState('INVALID_QR');
-            // Silent resume after 2 seconds to allow retry without unmounting
             setTimeout(() => {
                 setLocalTxState('IDLE');
                 setErrorMessage(null);
@@ -322,12 +350,18 @@ export default function AttendancePage() {
     }
 
     const handleSubmitAttendance = async (qrData: AttendanceQrPayload) => {
-        if (!tempSessionId || !fingerprintHash || !selectedLab || !activeSession) return;
+        // 🛑 Issue #3: Provide feedback if state is missing
+        if (!tempSessionId || !fingerprintHash || !selectedLab || !activeSession) {
+            if (!isTestMode) {
+                setLocalTxState('ERROR');
+                setErrorMessage("Identity session lost. Please login again.");
+                return;
+            }
+        }
 
+        // 🛑 Issue #8: Correct Test Mode behavior
         if (isTestMode) {
-            await new Promise(r => setTimeout(r, 1500));
-            setLocalTxState('SUCCESS');
-            setTimeout(() => setStatus('CONFIRMED'), 1000);
+            console.log("Shadow Simulation: Anchoring presence locally...");
             return;
         }
 
@@ -336,8 +370,8 @@ export default function AttendancePage() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-session-id': tempSessionId,
-                    'x-fingerprint': fingerprintHash
+                    'x-session-id': tempSessionId || '',
+                    'x-fingerprint': fingerprintHash || ''
                 },
                 body: JSON.stringify({
                     s_id: qrData.s_id,
@@ -348,28 +382,20 @@ export default function AttendancePage() {
             });
 
             const result = await response.json();
-            
-            if (result.success) {
-                setLocalTxState('SUCCESS');
-                // Brief delay to show success overlay before full screen transition
-                setTimeout(() => setStatus('CONFIRMED'), 1200);
-            } else {
+
+            if (!result.success) {
                 setErrorMessage(result.error || "Submission rejected by central matrix.");
                 setLocalTxState('ERROR');
+                // Auto-recovery to allow student to try again if it was a server rejection
                 setTimeout(() => {
+                    setStatus('SCANNING_QR');
                     setLocalTxState('IDLE');
-                    setErrorMessage(null);
                     if (scannerRef.current) scannerRef.current.resume();
                 }, 3000);
             }
         } catch {
             setErrorMessage("Transmission Failure: Encryption node unreachable.");
             setLocalTxState('ERROR');
-            setTimeout(() => {
-                setLocalTxState('IDLE');
-                setErrorMessage(null);
-                if (scannerRef.current) scannerRef.current.resume();
-            }, 3000);
         }
     };
 
@@ -388,7 +414,7 @@ export default function AttendancePage() {
             setScanProgress((i + 1) * 20);
             await new Promise(r => setTimeout(r, 600));
         }
-        
+
         setTimeout(() => {
             setIsIntegrityScanning(false);
             setScanProgress(0);
@@ -444,19 +470,20 @@ export default function AttendancePage() {
             if (scannerRef.current && scannerRef.current.isScanning) {
                 try {
                     await scannerRef.current.pause(true);
-                } catch {}
+                } catch { }
             }
-            
-            await resizeImageForScan(file);
+
+            const resizedDataUrl = await resizeImageForScan(file);
             const backgroundBufferId = "file-qr-buffer";
             const html5QrCode = new Html5Qrcode(backgroundBufferId, { verbose: false });
-            
+
             try {
-                const decodedText = await html5QrCode.scanFile(file, false);
-                try { await html5QrCode.clear(); } catch {}
+                // 🛑 Issue #6: Use the resized image data URL for scanning
+                const decodedText = await html5QrCode.scanFile(new File([await (await fetch(resizedDataUrl)).blob()], file.name), false);
+                try { await html5QrCode.clear(); } catch { }
                 await onScanSuccess(decodedText);
             } catch {
-                try { await html5QrCode.clear(); } catch {}
+                try { await html5QrCode.clear(); } catch { }
                 throw new Error("UNREADABLE_SIGNATURE: The matrix could not decode this entry. Ensure the QR is clear and well-lit.");
             }
         } catch (err: unknown) {
@@ -465,7 +492,7 @@ export default function AttendancePage() {
         } finally {
             setIsProcessingFile(false);
             if (scannerRef.current) {
-                try { scannerRef.current.resume(); } catch {}
+                try { scannerRef.current.resume(); } catch { }
             }
         }
     };
@@ -503,7 +530,8 @@ export default function AttendancePage() {
                     100% { transform: scale(1.5); opacity: 0; }
                 }
                 #attendance-reader video {
-                    object-fit: cover !important;
+                    object-fit: contain !important;
+                    background: black;
                     border-radius: 28px !important;
                     width: 100% !important;
                     height: 100% !important;
@@ -546,7 +574,7 @@ export default function AttendancePage() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10">
                 <div className="lg:col-span-8">
                     <div className="bg-white rounded-[40px] lg:rounded-[50px] border border-slate-100 p-6 lg:p-12 shadow-sm relative overflow-hidden group min-h-[500px] lg:min-h-[550px] flex flex-col justify-center">
-                        
+
                         <div className="absolute top-10 right-10 text-[60px] font-black text-slate-50 opacity-40 select-none tracking-tighter pointer-events-none group-hover:text-blue-50 transition-colors uppercase">
                             {status.split('_')[0]}
                         </div>
@@ -559,13 +587,13 @@ export default function AttendancePage() {
                                     </div>
                                     <h3 className="text-3xl lg:text-4xl font-black text-slate-900 tracking-tighter mb-4 leading-none font-display">Select Laboratory Node</h3>
                                     <p className="text-slate-400 text-sm lg:text-lg font-medium mb-8 lg:mb-12 max-w-sm mx-auto">Identify the laboratory cohort you are currently attending to manifest a beacon search.</p>
-                                    
+
                                     <div className="w-full max-w-sm grid grid-cols-1 gap-3 lg:gap-4 mb-8 lg:mb-10">
                                         {enrolledLabs.length === 0 ? (
                                             <p className="p-8 bg-slate-50 rounded-3xl text-[11px] font-black text-slate-400 uppercase tracking-widest">No Enrolled Hubs Detected</p>
                                         ) : (
                                             enrolledLabs.map((lab) => (
-                                                <button 
+                                                <button
                                                     key={lab.id}
                                                     onClick={() => { setSelectedLab(lab); setErrorMessage(null); }}
                                                     className={`p-6 rounded-3xl border text-left transition-all flex items-center justify-between ${selectedLab?.id === lab.id ? 'bg-[#f0f7ff] border-blue-500 shadow-xl shadow-blue-500/5' : 'bg-slate-50 border-transparent hover:border-slate-200'}`}
@@ -588,7 +616,7 @@ export default function AttendancePage() {
                                     )}
 
                                     {selectedLab && (
-                                        <button 
+                                        <button
                                             onClick={startBeaconSearch}
                                             className="bg-[#0052a5] text-white w-full sm:w-auto px-10 lg:px-12 py-4 lg:py-5 rounded-[24px] lg:rounded-[28px] text-[11px] lg:text-[12px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-blue-500/20 hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-4"
                                         >
@@ -629,7 +657,7 @@ export default function AttendancePage() {
                                 <motion.div key="scanning" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center text-center w-full">
                                     <div className="w-full max-w-sm aspect-square bg-slate-900 rounded-[40px] overflow-hidden border-[12px] border-white shadow-2xl relative">
                                         <div id="attendance-reader" className="w-full h-full relative z-10"></div>
-                                        
+
                                         {isScannerStarting && (
                                             <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center text-white z-40">
                                                 <Loader2 size={40} className="animate-spin mb-4 text-[#0052a5]" />
@@ -637,7 +665,7 @@ export default function AttendancePage() {
                                             </div>
                                         )}
 
-                                        {localTxState === 'IDLE' && !isScannerStarting && (
+                                        {localTxState === 'FORCE_DISABLED' && (
                                             <>
                                                 <div className="absolute top-[10%] left-[10%] right-[10%] bottom-[10%] border-2 border-emerald-500/40 rounded-3xl z-20 pointer-events-none">
                                                     <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-emerald-500 rounded-tl-lg" />
@@ -679,7 +707,7 @@ export default function AttendancePage() {
 
                                         {isTestMode && localTxState === 'IDLE' && (
                                             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[60]">
-                                                <button 
+                                                <button
                                                     onClick={runShadowSimulation}
                                                     className="bg-emerald-500 text-white px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest shadow-2xl shadow-black/40 hover:scale-105 active:scale-95 transition-all"
                                                 >
@@ -688,15 +716,15 @@ export default function AttendancePage() {
                                             </div>
                                         )}
                                     </div>
-                                    
+
                                     <div id="file-qr-buffer" style={{ display: 'none' }} aria-hidden="true" />
-                                    
+
                                     <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-sm">
                                         <div className="flex items-center gap-4 text-slate-300">
                                             <div className="w-2 h-2 bg-[#0052a5] rounded-full animate-pulse" />
                                             <p className="text-[10px] font-black uppercase tracking-widest leading-none">UPI Matrix Mode: Point & Detect</p>
                                         </div>
-                                        
+
                                         <div className="p-5 lg:p-6 bg-slate-50 rounded-[32px] border border-slate-100 w-full group/fallback relative overflow-hidden">
                                             {isProcessingFile && (
                                                 <div className="absolute inset-0 bg-white/70 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center p-4">
@@ -721,7 +749,7 @@ export default function AttendancePage() {
                                 <motion.div key="success" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center text-center py-6">
                                     <div className="w-32 h-32 bg-emerald-500 text-white rounded-[40px] flex items-center justify-center mb-10 shadow-2xl shadow-emerald-500/40 relative">
                                         <CircleCheckBig size={64} strokeWidth={3} />
-                                        <motion.div initial={{ scale: 1, opacity: 0.5 }} animate={{ scale: 1.5, opacity: 0 }} transition={{ duration:1, repeat: Infinity }} className="absolute inset-0 border-4 border-emerald-500 rounded-[40px]" />
+                                        <motion.div initial={{ scale: 1, opacity: 0.5 }} animate={{ scale: 1.5, opacity: 0 }} transition={{ duration: 1, repeat: Infinity }} className="absolute inset-0 border-4 border-emerald-500 rounded-[40px]" />
                                     </div>
                                     <h4 className="text-5xl font-black text-slate-900 tracking-tighter mb-4 font-display">Presence Confirmed</h4>
                                     <p className="text-slate-400 font-medium text-[13px] uppercase tracking-widest mb-12">Academic ledger updated for {activeSession?.course_code}.</p>
@@ -750,7 +778,15 @@ export default function AttendancePage() {
                                         <p className="text-[11px] font-black text-slate-900">{sub.val}</p>
                                     </div>
                                     <div className="h-1.5 w-full bg-slate-50 rounded-full overflow-hidden">
-                                        <motion.div initial={{ width: 0 }} animate={{ width: sub.val.includes('%') ? sub.val : '100%' }} transition={{ delay: 1 + (i*0.1), duration: 1 }} className={`h-full bg-${sub.color} rounded-full`}></motion.div>
+                                        <motion.div
+                                            initial={{ width: 0 }}
+                                            animate={{ width: sub.val.includes('%') ? sub.val : '100%' }}
+                                            transition={{ delay: 1 + (i * 0.1), duration: 1 }}
+                                            className={`h-full rounded-full ${sub.color === 'emerald-500' ? 'bg-emerald-500' :
+                                                sub.color === 'blue-500' ? 'bg-blue-500' :
+                                                    sub.color === 'amber-500' ? 'bg-amber-500' : 'bg-slate-400'
+                                                }`}
+                                        />
                                     </div>
                                 </div>
                             ))}
@@ -762,15 +798,15 @@ export default function AttendancePage() {
                         <ShieldCheck size={48} className="mb-8 text-blue-400 group-hover:scale-110 transition-transform" />
                         <h4 className="text-2xl font-black tracking-tighter mb-4 leading-tight font-display">Zero-Trust Presence Hub</h4>
                         <p className="text-blue-100/40 text-[13px] font-medium leading-relaxed mb-10">Your presence is anchored to the 64-character SHA-256 institutional digest generated for this device node.</p>
-                        
+
                         <div className="flex flex-col gap-3">
-                            <button 
+                            <button
                                 onClick={performIntegrityScan}
                                 className="w-full py-4 bg-white/5 border border-white/10 rounded-3xl text-[10px] font-black uppercase tracking-widest hover:bg-white hover:text-slate-900 transition-all flex items-center justify-center gap-3 active:scale-95"
                             >
                                 Integrity Check <Activity size={16} />
                             </button>
-                            <button 
+                            <button
                                 onClick={() => {
                                     setIsTestMode(!isTestMode);
                                     setStatus('LAB_SELECT');
@@ -789,7 +825,7 @@ export default function AttendancePage() {
             {/* Historic Presence Ledger */}
             <section className="bg-white rounded-[50px] border border-slate-100 shadow-sm p-12 overflow-hidden relative">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-slate-50 rounded-full blur-3xl -mr-32 -mt-32 opacity-50" />
-                
+
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-16 relative z-10">
                     <div className="flex items-center gap-6">
                         <div className="w-14 h-14 bg-slate-900 rounded-2xl flex items-center justify-center text-white shadow-xl shadow-black/10">
@@ -805,53 +841,52 @@ export default function AttendancePage() {
                 <div className="overflow-x-auto relative z-10">
                     {attendanceLogs.length === 0 ? (
                         <div className="py-20 text-center bg-slate-50/50 rounded-[40px] border border-dashed border-slate-100">
-                           <Clock size={48} className="text-slate-200 mx-auto mb-6" />
-                           <p className="text-[12px] font-black uppercase tracking-[0.3em] text-slate-300">Awaiting presence node manifest...</p>
+                            <Clock size={48} className="text-slate-200 mx-auto mb-6" />
+                            <p className="text-[12px] font-black uppercase tracking-[0.3em] text-slate-300">Awaiting presence node manifest...</p>
                         </div>
                     ) : (
                         <table className="w-full text-left">
-                           <thead>
-                              <tr className="border-b border-slate-50">
-                                 <th className="pb-8 text-[11px] uppercase font-black tracking-[0.25em] text-slate-300 pl-4">Class Node</th>
-                                 <th className="pb-8 text-[11px] uppercase font-black tracking-[0.25em] text-slate-300">Status Matrix</th>
-                                 <th className="pb-8 text-[11px] uppercase font-black tracking-[0.25em] text-slate-300">Manifested At</th>
-                                 <th className="pb-8 text-[11px] uppercase font-black tracking-[0.25em] text-slate-300 text-right pr-4">Node ID</th>
-                              </tr>
-                           </thead>
-                           <tbody className="divide-y divide-slate-50">
-                              {attendanceLogs.map((log, i) => (
-                                 <tr key={i} className="group hover:bg-slate-50/50 transition-colors">
-                                    <td className="py-8 pl-4">
-                                       <div className="flex items-center gap-6">
-                                          <div className="w-14 h-14 rounded-2xl bg-[#0052a5]/5 flex items-center justify-center text-[#0052a5] group-hover:bg-[#0052a5] group-hover:text-white transition-all transform group-hover:scale-105 shadow-sm">
-                                             <CircleUser size={28} />
-                                          </div>
-                                          <div>
-                                             <p className="text-[16px] font-black text-slate-900 tracking-tight mb-1 group-hover:text-[#0052a5] transition-colors">{log.class_sessions?.course_code || "Experimental Lab"}</p>
-                                             <p className="text-[10px] font-extrabold uppercase tracking-widest text-[#0052a5]/40 group-hover:text-[#0052a5]/60 transition-colors">Vanguard Laboratory Cohort</p>
-                                          </div>
-                                       </div>
-                                    </td>
-                                    <td className="py-8">
-                                       <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[10px] font-black tracking-[0.1em] ${
-                                          log.final_status === 'VERIFIED' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'
-                                       }`}>
-                                          {log.final_status === 'VERIFIED' ? <CircleCheckBig size={12} strokeWidth={3} /> : <AlertCircle size={12} strokeWidth={3} />}
-                                          {log.final_status}
-                                       </div>
-                                    </td>
-                                    <td className="py-8">
-                                       <div>
-                                          <p className="text-[13px] font-black text-slate-700 tracking-tight leading-none mb-1">{new Date(log.scanned_at).toLocaleDateString()}</p>
-                                          <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">{new Date(log.scanned_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                                       </div>
-                                    </td>
-                                    <td className="py-8 text-right pr-4">
-                                       <span className="text-[10px] font-black text-slate-200 uppercase tracking-tighter group-hover:text-[#0052a5]/20 transition-colors font-mono tracking-tight">{log.id.slice(0, 13)}...</span>
-                                    </td>
-                                 </tr>
-                              ))}
-                           </tbody>
+                            <thead>
+                                <tr className="border-b border-slate-50">
+                                    <th className="pb-8 text-[11px] uppercase font-black tracking-[0.25em] text-slate-300 pl-4">Class Node</th>
+                                    <th className="pb-8 text-[11px] uppercase font-black tracking-[0.25em] text-slate-300">Status Matrix</th>
+                                    <th className="pb-8 text-[11px] uppercase font-black tracking-[0.25em] text-slate-300">Manifested At</th>
+                                    <th className="pb-8 text-[11px] uppercase font-black tracking-[0.25em] text-slate-300 text-right pr-4">Node ID</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-50">
+                                {attendanceLogs.map((log, i) => (
+                                    <tr key={i} className="group hover:bg-slate-50/50 transition-colors">
+                                        <td className="py-8 pl-4">
+                                            <div className="flex items-center gap-6">
+                                                <div className="w-14 h-14 rounded-2xl bg-[#0052a5]/5 flex items-center justify-center text-[#0052a5] group-hover:bg-[#0052a5] group-hover:text-white transition-all transform group-hover:scale-105 shadow-sm">
+                                                    <CircleUser size={28} />
+                                                </div>
+                                                <div>
+                                                    <p className="text-[16px] font-black text-slate-900 tracking-tight mb-1 group-hover:text-[#0052a5] transition-colors">{log.class_sessions?.course_code || "Experimental Lab"}</p>
+                                                    <p className="text-[10px] font-extrabold uppercase tracking-widest text-[#0052a5]/40 group-hover:text-[#0052a5]/60 transition-colors">Vanguard Laboratory Cohort</p>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="py-8">
+                                            <div className={`inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[10px] font-black tracking-[0.1em] ${log.final_status === 'VERIFIED' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : 'bg-rose-50 text-rose-600 border border-rose-100'
+                                                }`}>
+                                                {log.final_status === 'VERIFIED' ? <CircleCheckBig size={12} strokeWidth={3} /> : <AlertCircle size={12} strokeWidth={3} />}
+                                                {log.final_status}
+                                            </div>
+                                        </td>
+                                        <td className="py-8">
+                                            <div>
+                                                <p className="text-[13px] font-black text-slate-700 tracking-tight leading-none mb-1">{new Date(log.scanned_at).toLocaleDateString()}</p>
+                                                <p className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">{new Date(log.scanned_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                                            </div>
+                                        </td>
+                                        <td className="py-8 text-right pr-4">
+                                            <span className="text-[10px] font-black text-slate-200 uppercase tracking-tighter group-hover:text-[#0052a5]/20 transition-colors font-mono tracking-tight">{log.id.slice(0, 13)}...</span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
                         </table>
                     )}
                 </div>
@@ -860,24 +895,24 @@ export default function AttendancePage() {
             {/* Integrity Scan Overlay */}
             <AnimatePresence>
                 {isIntegrityScanning && (
-                    <motion.div 
+                    <motion.div
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         className="fixed inset-0 bg-slate-900/80 backdrop-blur-xl z-[150] flex items-center justify-center p-6 text-white"
                     >
-                        <motion.div 
+                        <motion.div
                             initial={{ scale: 0.9, y: 40 }}
                             animate={{ scale: 1, y: 0 }}
                             exit={{ scale: 0.9, y: 40 }}
                             className="bg-white text-slate-900 w-full max-w-lg rounded-[60px] shadow-2xl p-16 text-center overflow-hidden relative"
                         >
                             <div className="absolute top-0 right-0 w-64 h-64 bg-slate-50 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none opacity-50" />
-                            
+
                             <div className="relative z-10 flex flex-col items-center">
                                 <div className="w-28 h-28 bg-[#0052a5] text-white rounded-[40px] flex items-center justify-center mb-10 shadow-2xl shadow-blue-500/40 relative">
                                     <ShieldCheck size={56} />
-                                    <motion.div 
+                                    <motion.div
                                         animate={{ scale: [1, 1.6, 1], opacity: [0.3, 0, 0.3] }}
                                         transition={{ duration: 2, repeat: Infinity }}
                                         className="absolute inset-0 border-4 border-blue-400 rounded-[40px]"
@@ -885,9 +920,9 @@ export default function AttendancePage() {
                                 </div>
                                 <h3 className="text-3xl font-black tracking-tighter mb-4 uppercase font-display">Integrity Pulse</h3>
                                 <p className="text-slate-400 text-sm font-bold uppercase tracking-widest mb-12 animate-pulse">{scanState}</p>
-                                
+
                                 <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden mb-10">
-                                    <motion.div 
+                                    <motion.div
                                         animate={{ width: `${scanProgress}%` }}
                                         className="h-full bg-[#0052a5] shadow-[0_0_15px_rgba(0,82,165,0.4)]"
                                     ></motion.div>

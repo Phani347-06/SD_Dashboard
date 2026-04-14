@@ -57,33 +57,31 @@ export default function StudentScanPage() {
         if (!container) return;
 
         try {
-          setIsScannerStarting(true);
-          
-          // Cleanup orphaned instance
           if (scannerRef.current) {
             try {
-              if (scannerRef.current.isScanning) await scannerRef.current.stop();
+              await scannerRef.current.stop();
               await scannerRef.current.clear();
-            } catch { /* noop */ }
+            } catch {}
+            scannerRef.current = null;
           }
 
+          setIsScannerStarting(true);
           qrEngine = new Html5Qrcode("reader", { verbose: false });
           scannerRef.current = qrEngine;
 
-          await qrEngine.start(
-            { facingMode: "environment" },
-            { 
-              fps: 25, 
-              qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-                return { width: viewfinderWidth * 0.8, height: viewfinderHeight * 0.8 };
+          if (scannerRef.current && !scannerRef.current.isScanning) {
+            await scannerRef.current.start(
+              { facingMode: "environment" },
+              { 
+                fps: 10, // Optimized for high-density detection
+                qrbox: { width: 320, height: 320 }, // Optimized for reliability
+                disableFlip: false 
               },
-              disableFlip: false 
-            },
-            onScanSuccess,
-            () => {} // Suppress frame errors
-          );
-          
-          if (!isStopped) setIsScannerStarting(false);
+              onScanSuccess,
+              () => {} 
+            );
+            setIsScannerStarting(false);
+          }
         } catch (err: unknown) {
           if (!isStopped) {
             setIsScannerStarting(false);
@@ -102,10 +100,18 @@ export default function StudentScanPage() {
       return () => {
         isStopped = true;
         clearTimeout(mountTimer);
-        if (qrEngine && qrEngine.isScanning) {
-          qrEngine.stop().catch(() => {});
-        }
-        scannerRef.current = null;
+        (async () => {
+          const engine = scannerRef.current;
+          if (engine) {
+            try {
+              if (engine.isScanning) {
+                await engine.stop();
+              }
+              await engine.clear();
+            } catch {}
+            scannerRef.current = null;
+          }
+        })();
       };
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -131,13 +137,23 @@ export default function StudentScanPage() {
 
       const BEACON_SERVICE_UUID = 'b5c879b2-3be9-450f-90e7-ecad1d7d242c';
       const device = await navigator.bluetooth.requestDevice({
-         acceptAllDevices: true,
+         filters: [{ 
+            namePrefix: 'LabBeacon',
+            services: [BEACON_SERVICE_UUID] 
+         }],
          optionalServices: [BEACON_SERVICE_UUID]
       });
-      if (device) {
-         setBeaconFound(true);
-         setStatus('SCANNING');
-      }
+
+      // Step 2: PROXIMITY VERIFICATION (GATT Handshake)
+      const server = await device.gatt?.connect();
+      if (!server) throw new Error("Hardware Handshake Failed: Could not connect to the LabBeacon GATT server.");
+      
+      const service = await server.getPrimaryService(BEACON_SERVICE_UUID);
+      const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+      await characteristic.readValue(); 
+
+      setBeaconFound(true);
+      setStatus('SCANNING');
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e);
       setStatus('ERROR');
@@ -151,6 +167,7 @@ export default function StudentScanPage() {
 
   // 4. UPI Scan Success Handler
   async function onScanSuccess(decodedText: string) {
+    console.log("QR DETECTED:", decodedText);
     try {
       // Haptic pulse
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -168,6 +185,17 @@ export default function StudentScanPage() {
         throw new Error("Detected Invalid Laboratory QR Signature.");
       }
 
+      // OPTIMISTIC UI: Mock local success for development bypass
+      if (isBypassed) {
+         console.log("Shadow Simulation: Anchoring presence locally...");
+         setLocalTxState('SUCCESS');
+         setTimeout(() => {
+            setStatus('SUCCESS');
+            setTimeout(() => router.push('/student'), 2000);
+         }, 1000);
+         return;
+      }
+
       // Submit attendance
       const attendanceRequest = await fetch('/api/attendance/submit', {
          method: 'POST',
@@ -177,7 +205,7 @@ export default function StudentScanPage() {
             class_session_id: s_id,
             t_id,
             v_code,
-            beacon_status: isBypassed ? 'BYPASSED' : 'CONNECTED',
+            beacon_status: 'CONNECTED',
             fingerprint_hash: fingerprintHash
          })
       });
@@ -253,15 +281,20 @@ export default function StudentScanPage() {
       if (scannerRef.current && scannerRef.current.isScanning) {
         try { await scannerRef.current.pause(true); } catch { /* noop */ }
       }
-      await resizeImageForScan(file);
-      const bgDecoder = new Html5Qrcode("file-qr-buffer", { verbose: false });
+      const resizedDataUrl = await resizeImageForScan(file);
+      const backgroundBufferId = "file-qr-buffer";
+      const bgDecoder = new Html5Qrcode(backgroundBufferId, { verbose: false });
+      
       try {
-        const decoded = await bgDecoder.scanFile(file, false);
+        const blob = await (await fetch(resizedDataUrl)).blob();
+        const resizedFile = new File([blob], file.name, { type: 'image/jpeg' });
+        
+        const decoded = await bgDecoder.scanFile(resizedFile, false);
         try { await bgDecoder.clear(); } catch { /* noop */ }
         await onScanSuccess(decoded);
-      } catch {
+      } catch (scanErr) {
         try { await bgDecoder.clear(); } catch { /* noop */ }
-        throw new Error("Could not decode QR from this image. Ensure the QR is clear and well-lit.");
+        throw new Error("UNREADABLE_SIGNATURE: The matrix could not decode this image. Ensure the QR is clear and well-lit.");
       }
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -415,7 +448,7 @@ export default function StudentScanPage() {
                  )}
 
                  {/* Laser Sync + Corner Brackets */}
-                 {localTxState === 'IDLE' && !isScannerStarting && (
+                 {localTxState === 'FORCE_DISABLED' && (
                    <>
                      <div className="absolute top-[12.5%] left-[12.5%] right-[12.5%] bottom-[12.5%] border border-emerald-500/20 rounded-3xl z-20 pointer-events-none">
                        <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-emerald-500 rounded-tl-2xl shadow-[-5px_-5px_15px_-5px_#10b981]" />
