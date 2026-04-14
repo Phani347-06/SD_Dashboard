@@ -75,7 +75,7 @@ export async function POST(req: Request) {
     // 4. Send Professional Receipt via Resend
     let emailSent = false;
     try {
-      await resend.emails.send({
+      const { data, error: resendErr } = await resend.emails.send({
         from: 'Lab Intel <no-reply@coolie.me>',
         to: [`${student.roll_no}@vnrvjiet.in`],
         subject: `✅ Attendance Verified: ${qrSession.class_sessions.course_code}`,
@@ -97,10 +97,15 @@ export async function POST(req: Request) {
           </div>
         `,
       });
-      emailSent = true;
-      console.log("Resend: Attendance receipt dispatched successfully");
+
+      if (resendErr) {
+        console.error("Resend API Error:", resendErr);
+      } else {
+        emailSent = true;
+        console.log("Resend: Attendance receipt dispatched successfully", data?.id);
+      }
     } catch (emailErr: any) {
-      console.error("Resend System Failure:", emailErr.message);
+      console.error("Resend SDK Runtime Failure:", emailErr.message);
     }
 
     return NextResponse.json({ 
