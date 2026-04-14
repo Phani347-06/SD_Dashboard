@@ -224,14 +224,13 @@ export default function LoginPage() {
           if (role === 'student') {
              const expires_at = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(); // Increased to 4 hours for stability
              
-             // 5.1 🧹 INSTITUTIONAL CLEANUP: Remove legacy sessions (Direct Removal)
-             // A: Global Maintenance Sweep (Purge sessions > 30 days old to manage DB size)
-             const thirtyDaysAgo = new Date();
-             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-             await supabase.from('sessions').delete().lt('created_at', thirtyDaysAgo.toISOString());
-
-             // B: Student-Specific Purge (Single Device Enforcement)
-             await supabase.from('sessions').delete().eq('student_id', profile.id);
+             // 5.1 🧹 INSTITUTIONAL CLEANUP: Deactivate legacy sessions
+             // Ensure only ONE session node is active per student at any given time.
+             await supabase
+                .from('sessions')
+                .update({ is_active: false })
+                .eq('student_id', profile.id)
+                .eq('is_active', true);
 
              // 5.2 Manifest new temporary session node
              const { error: sessionError } = await supabase.from('sessions').insert({

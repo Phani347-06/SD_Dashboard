@@ -404,6 +404,11 @@ export default function AttendancePage() {
                     v_code: parts[3],
                     exp: isNaN(expiry) ? undefined : expiry
                 };
+
+                // 🛑 Institutional Safety: Safeguard against 'Dead Matrix' scans
+                if (!data.s_id || !data.t_id || !data.v_code) {
+                   throw new Error("EMPTY_MATRIX_NODE: The scanned node is currently initializing or in standby. Please wait for the QR to refresh.");
+                }
             } else if (decodedText.startsWith('v1|')) {
                 const parts = decodedText.split('|');
                 if (parts.length < 4) {

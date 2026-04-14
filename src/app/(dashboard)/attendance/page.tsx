@@ -77,6 +77,8 @@ export default function AttendancePage() {
                 .from('temp_qr_sessions')
                 .select('*')
                 .eq('class_session_id', activeSession.id)
+                .order('expires_at', { ascending: false })
+                .limit(1)
                 .maybeSingle();
              
              if (activeToken) {
