@@ -96,7 +96,7 @@ export default function StudentScanPage() {
             await scannerRef.current.start(
               { facingMode: "environment" },
               { 
-                fps: 10, // Optimized for high-density detection
+                fps: 15, // Higher tracking frequency for rapid detection
                 qrbox: { width: 320, height: 320 }, // Optimized for reliability
                 disableFlip: false 
               },
@@ -380,9 +380,10 @@ export default function StudentScanPage() {
           background: #000 !important;
           border-radius: 24px !important;
           z-index: 10 !important;
+          image-rendering: -webkit-optimize-contrast !important; /* Force sensor sharpness */
         }
         #reader video {
-          object-fit: cover !important;
+          object-fit: contain !important;
           width: 100% !important;
           height: 100% !important;
           position: absolute !important;

@@ -266,9 +266,9 @@ export default function AttendancePage() {
 
                     if (status === 'SCANNING_QR' && scannerRef.current && !scannerRef.current.isScanning) {
                         const config = {
-                            fps: 10, // Optimized for reliability on dense patterns
+                            fps: 15, // Higher frequency for moving targets
                             disableFlip: false,
-                            qrbox: { width: 320, height: 320 }, // Optimized Google Pay size
+                            qrbox: { width: 320, height: 320 }, // Focused center region
                         };
 
                         await scannerRef.current.start(
@@ -588,6 +588,7 @@ export default function AttendancePage() {
                     height: 100% !important;
                     position: relative !important;
                     overflow: hidden !important;
+                    image-rendering: -webkit-optimize-contrast !important; /* Force sharpness */
                 }
                 #attendance-reader > div {
                     width: 100% !important;
