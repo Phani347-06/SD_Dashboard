@@ -163,7 +163,6 @@ export default function AttendancePage() {
                 .eq('lab_id', selectedLab.id)
                 .in('status', ['ACTIVE', 'COMPLETED'])
                 .order('status', { ascending: true }) // Prioritize ACTIVE over COMPLETED
-                .order('created_at', { ascending: false }) // Prioritize latest absolute creation
                 .limit(1);
 
             const sessions = sessionList && sessionList.length > 0 ? sessionList[0] : null;

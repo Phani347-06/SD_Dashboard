@@ -327,7 +327,12 @@ export default function AttendancePage() {
      }
    };
 
-  const qrExpiry = Math.floor((Date.now() + 600000) / 1000); // 10 minute display validity
+  // 🛡️ STABILITY GUARD: Anchor QR expiry to the manifested temp session node 
+  // Subtracting 120s (2m grace) from DB expires_at to get the 10m display validity.
+  const qrExpiry = tempSession?.expires_at 
+    ? Math.floor(new Date(tempSession.expires_at).getTime() / 1000) - 120 
+    : Math.floor((Date.now() + 600000) / 1000);
+
   const qrValue = `v2|${session?.id || ''}|${tempSession?.temp_session_id || ''}|${tempSession?.verification_code || ''}|${qrExpiry}`;
 
    return (
