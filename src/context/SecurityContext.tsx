@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { generateInstitutionalFingerprint, hashFingerprint, generateVanguardUUID } from '@/lib/security';
 import { supabase } from '@/lib/supabase';
 
@@ -14,12 +14,7 @@ interface SecurityContextType {
 
 const SecurityContext = createContext<SecurityContextType | undefined>(undefined);
 
-/**
- * 🛰️ Institutional Security Provider
- * Manages the memory-only session nodes for the Silent Background Security layer.
- */
 export function SecurityProvider({ children }: { children: React.ReactNode }) {
-  // Memory-only storage (not in localStorage/sessionStorage)
   const [tempSessionId, setTempSessionId] = useState<string | null>(null);
   const [fingerprintHash, setFingerprintHash] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(true);
@@ -35,119 +30,160 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.removeItem('__lab_sess_id');
   };
 
-  /**
-   * 🛡️ Silent Re-Manifestation Protocol
-   * Stabilized with sessionStorage anchor and Fingerprint-Affinity rules.
-   */
   useEffect(() => {
+    let isDisposed = false;
+    let refreshInFlight = false;
+
     const reinitSecurity = async () => {
+      if (isDisposed || refreshInFlight) return;
+
+      refreshInFlight = true;
       setIsVerifying(true);
+
       try {
         const { data: { session: authSession } } = await supabase.auth.getSession();
-        
-        if (authSession?.user) {
-          const fingerprint = generateInstitutionalFingerprint();
-          const hash = await hashFingerprint(fingerprint);
-          
-          // 1. Try to re-anchor using sessionStorage (survives tab refresh)
-          const persistedId = sessionStorage.getItem('__lab_sess_id');
-          if (persistedId) {
-            const { data: sessionNode } = await supabase
-              .from('sessions')
-              .select('*')
-              .eq('temp_session_id', persistedId)
-              .eq('student_id', authSession.user.id)
-              .eq('is_active', true)
-              .gt('expires_at', new Date().toISOString())
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle();
-            
-            if (sessionNode && sessionNode.fingerprint_hash === hash) {
-              console.log("🛡️ Session Anchor Verified: Persistent node matched.");
-              setSession(persistedId, hash);
-              setIsVerifying(false);
-              return;
-            }
-          }
 
-          // 2. Try to re-anchor using device fingerprint (survives app closure/re-open)
-          const { data: deviceSession, error: recoveryError } = await supabase
+        if (!authSession?.user) {
+          clearSession();
+          return;
+        }
+
+        const fingerprint = generateInstitutionalFingerprint();
+        const hash = await hashFingerprint(fingerprint);
+        const nowIso = new Date().toISOString();
+
+        const persistedId = sessionStorage.getItem('__lab_sess_id');
+        if (persistedId) {
+          const { data: sessionNode } = await supabase
+            .from('sessions')
+            .select('*')
+            .eq('temp_session_id', persistedId)
+            .eq('student_id', authSession.user.id)
+            .eq('is_active', true)
+            .gt('expires_at', nowIso)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (sessionNode && sessionNode.fingerprint_hash === hash) {
+            setSession(sessionNode.temp_session_id, hash);
+            return;
+          }
+        }
+
+        let deviceSessionQuery = await supabase
+          .from('sessions')
+          .select('*')
+          .eq('student_id', authSession.user.id)
+          .eq('fingerprint_hash', hash)
+          .eq('is_active', true)
+          .gt('expires_at', nowIso)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (deviceSessionQuery.error?.message?.includes('created_at')) {
+          deviceSessionQuery = await supabase
             .from('sessions')
             .select('*')
             .eq('student_id', authSession.user.id)
             .eq('fingerprint_hash', hash)
             .eq('is_active', true)
-            .gt('expires_at', new Date().toISOString())
-            .order('created_at', { ascending: false })
+            .gt('expires_at', nowIso)
+            .order('expires_at', { ascending: false })
             .limit(1)
             .maybeSingle();
+        }
 
-          if (recoveryError) {
-            console.error("🛡️ Security Matrix Recovery Failed:", recoveryError.message);
-            if (recoveryError.message.includes("created_at")) {
-              console.warn("CRITICAL: Database schema mismatch. Please run the SQL migration to add 'created_at'.");
-            }
-          }
+        if (deviceSessionQuery.error) {
+          console.error("Security Matrix Recovery Failed:", deviceSessionQuery.error.message);
+        }
 
-          if (deviceSession) {
-            console.log("🛡️ Session Anchor Recovered: Existing device node manifested.");
-            setSession(deviceSession.temp_session_id, hash);
-            sessionStorage.setItem('__lab_sess_id', deviceSession.temp_session_id);
-            setIsVerifying(false);
-            return;
-          }
+        if (deviceSessionQuery.data) {
+          setSession(deviceSessionQuery.data.temp_session_id, hash);
+          sessionStorage.setItem('__lab_sess_id', deviceSessionQuery.data.temp_session_id);
+          return;
+        }
 
-          // 3. Manifest New Node (Single Device Enforcement + Permanent Cleanup)
-          console.warn("Generating New Identity Node. Purging foreign fingerprints.");
-          
-          // 🧹 INSTITUTIONAL CLEANUP: Direct Removal of irrelevant data
-          // A: Remove sessions from DIFFERENT devices (fingerprints)
-          // A: Deactivate sessions from DIFFERENT devices (fingerprints)
-          await supabase
-            .from('sessions')
-            .update({ is_active: false })
-            .eq('student_id', authSession.user.id)
-            .neq('fingerprint_hash', hash)
-            .eq('is_active', true);
+        await supabase
+          .from('sessions')
+          .update({ is_active: false })
+          .eq('student_id', authSession.user.id)
+          .neq('fingerprint_hash', hash)
+          .eq('is_active', true);
 
-          // B: Sweep chronological detritus (Deactivate expired sessions for this student)
-          await supabase
-            .from('sessions')
-            .update({ is_active: false })
-            .eq('student_id', authSession.user.id)
-            .lt('expires_at', new Date().toISOString())
-            .eq('is_active', true);
+        await supabase
+          .from('sessions')
+          .update({ is_active: false })
+          .eq('student_id', authSession.user.id)
+          .lt('expires_at', nowIso)
+          .eq('is_active', true);
 
-          // C: Global Maintenance Sweep (Purge sessions > 30 days old to manage DB size)
-          const thirtyDaysAgo = new Date();
-          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-          await supabase.from('sessions').delete().lt('created_at', thirtyDaysAgo.toISOString());
+        const thirtyDaysAgo = new Date();
+        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        await supabase
+          .from('sessions')
+          .delete()
+          .lt('created_at', thirtyDaysAgo.toISOString());
 
-          const temp_id = generateVanguardUUID();
-          const expires_at = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(); // Increased to 4 hours for stability
-          
-          const { error: manifestError } = await supabase.from('sessions').insert({
-            temp_session_id: temp_id,
+        const tempId = generateVanguardUUID();
+        const expiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+
+        const { error: manifestError } = await supabase
+          .from('sessions')
+          .insert({
+            temp_session_id: tempId,
             student_id: authSession.user.id,
             fingerprint_hash: hash,
-            expires_at,
-            is_active: true
+            expires_at: expiresAt,
+            is_active: true,
           });
 
-          if (!manifestError) {
-             setSession(temp_id, hash);
-             sessionStorage.setItem('__lab_sess_id', temp_id);
-          }
+        if (manifestError) {
+          console.error("Security Re-Manifestation Failure:", manifestError.message);
+          return;
         }
+
+        setSession(tempId, hash);
+        sessionStorage.setItem('__lab_sess_id', tempId);
       } catch (err) {
         console.error("Security Re-Manifestation Failure:", err);
       } finally {
-        setIsVerifying(false);
+        refreshInFlight = false;
+        if (!isDisposed) {
+          setIsVerifying(false);
+        }
+      }
+    };
+
+    const refreshVisibleSession = () => {
+      if (document.visibilityState === 'visible') {
+        reinitSecurity();
       }
     };
 
     reinitSecurity();
+
+    const heartbeatId = window.setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        reinitSecurity();
+      }
+    }, 60_000);
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(() => {
+      reinitSecurity();
+    });
+
+    window.addEventListener('focus', refreshVisibleSession);
+    document.addEventListener('visibilitychange', refreshVisibleSession);
+
+    return () => {
+      isDisposed = true;
+      window.clearInterval(heartbeatId);
+      window.removeEventListener('focus', refreshVisibleSession);
+      document.removeEventListener('visibilitychange', refreshVisibleSession);
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   return (
