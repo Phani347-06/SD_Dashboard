@@ -321,9 +321,6 @@ export default function AttendancePage() {
         }
     }
 
-    // No-op for high-frequency scan errors, only log critical ones
-    // function onScanError(err: any) {} 
-
     const handleSubmitAttendance = async (qrData: AttendanceQrPayload) => {
         if (!tempSessionId || !fingerprintHash || !selectedLab || !activeSession) return;
 
@@ -399,7 +396,6 @@ export default function AttendancePage() {
     };
 
     // 5. Institutional File Manifestation (HTTP Fallback)
-    // Helper to resize image before QR scanning to improve performance
     const resizeImageForScan = (file: File): Promise<string> => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -445,28 +441,19 @@ export default function AttendancePage() {
             setIsProcessingFile(true);
             setErrorMessage(null);
 
-            // 1. Pause live scanner instead of stopping to maintain hardware state
             if (scannerRef.current && scannerRef.current.isScanning) {
                 try {
                     await scannerRef.current.pause(true);
                 } catch {}
             }
             
-            // 2. Resize image instantly to handle high-res photos
             await resizeImageForScan(file);
-            
-            // 3. Initialize background decoder on the ISOLATED buffer to prevent Hardware Lock
             const backgroundBufferId = "file-qr-buffer";
             const html5QrCode = new Html5Qrcode(backgroundBufferId, { verbose: false });
             
             try {
-                // Scan the file (second param false means don't render it)
                 const decodedText = await html5QrCode.scanFile(file, false);
-                
-                // 4. Cleanup background worker
                 try { await html5QrCode.clear(); } catch {}
-                
-                // 5. Submit to standard protocol
                 await onScanSuccess(decodedText);
             } catch {
                 try { await html5QrCode.clear(); } catch {}
@@ -477,7 +464,6 @@ export default function AttendancePage() {
             setErrorMessage(errorMessage || "File Manifestation Failure: Invalid or unreadable QR Signature.");
         } finally {
             setIsProcessingFile(false);
-            // Resume live sensor if it was held
             if (scannerRef.current) {
                 try { scannerRef.current.resume(); } catch {}
             }
@@ -519,9 +505,25 @@ export default function AttendancePage() {
                 #attendance-reader video {
                     object-fit: cover !important;
                     border-radius: 28px !important;
+                    width: 100% !important;
+                    height: 100% !important;
+                    position: absolute !important;
+                    top: 0 !important;
+                    left: 0 !important;
                 }
                 #attendance-reader {
                     border: none !important;
+                    width: 100% !important;
+                    height: 100% !important;
+                    position: relative !important;
+                    overflow: hidden !important;
+                }
+                #attendance-reader > div {
+                    width: 100% !important;
+                    height: 100% !important;
+                }
+                #attendance-reader img {
+                    display: none !important;
                 }
             `}</style>
 
@@ -626,10 +628,8 @@ export default function AttendancePage() {
                             {status === 'SCANNING_QR' && (
                                 <motion.div key="scanning" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center text-center w-full">
                                     <div className="w-full max-w-sm aspect-square bg-slate-900 rounded-[40px] overflow-hidden border-[12px] border-white shadow-2xl relative">
-                                        {/* PERSISTENT SCANNER CORE */}
                                         <div id="attendance-reader" className="w-full h-full relative z-10"></div>
                                         
-                                        {/* 1. INITIALIZING OVERLAY */}
                                         {isScannerStarting && (
                                             <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center text-white z-40">
                                                 <Loader2 size={40} className="animate-spin mb-4 text-[#0052a5]" />
@@ -637,7 +637,6 @@ export default function AttendancePage() {
                                             </div>
                                         )}
 
-                                        {/* 2. UPI LASER FEEDBACK (Always visible while scanning) */}
                                         {localTxState === 'IDLE' && !isScannerStarting && (
                                             <>
                                                 <div className="absolute top-[10%] left-[10%] right-[10%] bottom-[10%] border-2 border-emerald-500/40 rounded-3xl z-20 pointer-events-none">
@@ -650,7 +649,6 @@ export default function AttendancePage() {
                                             </>
                                         )}
 
-                                        {/* 3. VERIFICATION OVERLAY (Silent - No unmount) */}
                                         {localTxState === 'VERIFYING' && (
                                             <div className="absolute inset-0 bg-[#0052a5]/60 backdrop-blur-md flex flex-col items-center justify-center text-white z-40 animate-in zoom-in duration-300">
                                                 <div className="relative mb-6">
@@ -663,7 +661,6 @@ export default function AttendancePage() {
                                             </div>
                                         )}
 
-                                        {/* 4. SUCCESS OVERLAY */}
                                         {localTxState === 'SUCCESS' && (
                                             <div className="absolute inset-0 bg-emerald-500 flex flex-col items-center justify-center text-white z-[50] animate-in zoom-in duration-300">
                                                 <CircleCheckBig size={64} className="mb-4 animate-bounce" />
@@ -671,7 +668,6 @@ export default function AttendancePage() {
                                             </div>
                                         )}
 
-                                        {/* 5. ERROR OVERLAY (Auto-recoverable) */}
                                         {(localTxState === 'ERROR' || localTxState === 'INVALID_QR') && (
                                             <div className="absolute inset-0 bg-rose-500 flex flex-col items-center justify-center p-8 text-center text-white z-[50] animate-in fade-in duration-300">
                                                 <TriangleAlert size={40} className="mb-4" />

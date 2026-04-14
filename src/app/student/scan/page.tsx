@@ -72,7 +72,13 @@ export default function StudentScanPage() {
 
           await qrEngine.start(
             { facingMode: "environment" },
-            { fps: 25, disableFlip: false },
+            { 
+              fps: 25, 
+              qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+                return { width: viewfinderWidth * 0.8, height: viewfinderHeight * 0.8 };
+              },
+              disableFlip: false 
+            },
             onScanSuccess,
             () => {} // Suppress frame errors
           );
@@ -269,7 +275,7 @@ export default function StudentScanPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 relative">
+    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center p-6 relative">
       {/* UPI Laser Sync Styles */}
       <style jsx global>{`
         @keyframes scanner-laser {
@@ -281,131 +287,179 @@ export default function StudentScanPage() {
           0% { transform: scale(0.8); opacity: 0.8; }
           100% { transform: scale(1.5); opacity: 0; }
         }
+        #reader { 
+          border: none !important;
+          width: 100% !important;
+          height: 100% !important;
+          position: absolute !important;
+          top: 0 !important;
+          left: 0 !important;
+          overflow: hidden !important;
+          background: #000 !important;
+          border-radius: 24px !important;
+          z-index: 10 !important;
+        }
         #reader video {
           object-fit: cover !important;
-          border-radius: 20px !important;
+          width: 100% !important;
+          height: 100% !important;
+          position: absolute !important;
+          top: 0 !important;
+          left: 0 !important;
+          display: block !important;
+          min-height: 100% !important;
         }
-        #reader { border: none !important; }
+        /* Hide library generated elements that might interfere */
+        #reader__status_span, 
+        #reader__dashboard_section, 
+        #reader__camera_selection,
+        #reader img {
+          display: none !important;
+        }
+        @keyframes progress {
+          from { width: 0%; }
+          to { width: 100%; }
+        }
       `}</style>
 
-      <Link href="/student" className="absolute top-6 left-6 text-white/50 hover:text-white transition-colors duration-300">
+      <Link href="/student" className="absolute top-6 left-6 text-white/50 hover:text-white transition-colors duration-300 z-50">
          <ArrowLeft size={24} />
       </Link>
       
       <div className="w-full max-w-sm flex flex-col items-center">
-        <h1 className="text-2xl font-extrabold text-white mb-2 tracking-tight">Clinical Gateway</h1>
+        <div className="mb-8 text-center">
+          <h1 className="text-2xl font-black text-white tracking-tight uppercase italic underline decoration-blue-500 underline-offset-8">Scan Signature</h1>
+          <p className="mt-4 text-[10px] font-bold text-slate-500 uppercase tracking-[0.2em]">Institutional Access Node</p>
+        </div>
         
         {status === 'SUCCESS' ? (
-           <div className="flex flex-col items-center animate-in zoom-in-95 duration-500">
-              <div className="w-20 h-20 bg-green-500/20 rounded-full flex items-center justify-center mb-6">
-                 <CircleCheckBig size={48} className="text-green-500 animate-bounce" />
+           <div className="flex flex-col items-center animate-in zoom-in-95 duration-500 pt-10">
+              <div className="w-24 h-24 bg-emerald-500/20 rounded-full flex items-center justify-center mb-8 shadow-[0_0_30px_rgba(16,185,129,0.2)]">
+                 <CircleCheckBig size={56} className="text-emerald-500 animate-bounce" />
               </div>
-              <p className="text-xl font-bold text-white mb-2">Authenticated!</p>
-              <p className="text-sm text-slate-400 text-center">Your attendance has been cryptographically signed.</p>
+              <p className="text-xl font-black text-white mb-2 uppercase tracking-tight">Access Granted</p>
+              <p className="text-xs text-slate-400 text-center font-medium max-w-[200px] leading-relaxed">Your attendance has been cryptographically signed.</p>
            </div>
         ) : status === 'ERROR' && !beaconFound ? (
            <div className="flex flex-col items-center">
-              <div className="w-20 h-20 bg-red-500/20 rounded-full flex items-center justify-center mb-6">
-                 <CircleX size={48} className="text-red-500" />
+              <div className="w-24 h-24 bg-rose-500/20 rounded-full flex items-center justify-center mb-8">
+                 <CircleX size={56} className="text-rose-500" />
               </div>
-              <p className="text-xl font-bold text-white mb-2 text-center">Connection Failed</p>
-              <p className="text-sm text-red-500 text-center px-6 mb-6">{errorMessage}</p>
-              <button onClick={connectToBeacon} className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-semibold border border-slate-700 transition flex justify-center items-center gap-2">
-                 <Bluetooth size={18} /> Try Again
+              <p className="text-xl font-black text-white mb-2 uppercase tracking-tight">Sync Refused</p>
+              <p className="text-xs text-rose-500 text-center px-10 mb-10 font-bold italic leading-relaxed">{errorMessage}</p>
+              <button 
+                onClick={connectToBeacon} 
+                className="w-full py-5 bg-slate-900 hover:bg-slate-800 text-white rounded-3xl font-black uppercase tracking-[0.2em] text-[10px] border border-slate-800 transition-all flex justify-center items-center gap-2 active:scale-95 shadow-xl"
+              >
+                 <Bluetooth size={16} /> Re-scan Proximity
               </button>
               {process.env.NODE_ENV === 'development' && (
-                  <button onClick={() => { setBeaconFound(true); setStatus('SCANNING'); setIsBypassed(true); }} className="mt-8 text-[11px] text-slate-500 hover:text-blue-400 uppercase tracking-widest transition-colors font-bold flex items-center gap-2">
-                     <ShieldCheck size={14} /> Bypass BLE (Test Mode)
+                  <button onClick={() => { setBeaconFound(true); setStatus('SCANNING'); setIsBypassed(true); }} className="mt-10 text-[9px] text-slate-700 hover:text-blue-500 uppercase tracking-widest transition-colors font-black flex items-center gap-2">
+                     <ShieldCheck size={12} /> Bypass Peripheral Check
                   </button>
               )}
            </div>
         ) : !beaconFound ? (
-           <div className="w-full flex flex-col items-center bg-slate-800/50 p-8 rounded-[40px] border border-slate-700/50 shadow-2xl">
-              <div className="w-24 h-24 rounded-full bg-blue-500/20 flex items-center justify-center mb-8 relative">
+           <div className="w-full flex flex-col items-center bg-slate-900/40 p-10 rounded-[48px] border border-white/5 shadow-2xl backdrop-blur-sm">
+              <div className="w-28 h-28 rounded-full bg-blue-600/10 flex items-center justify-center mb-10 relative">
                  {status === 'BEACON_SEARCH' && (
-                     <div className="absolute inset-0 rounded-full border-4 border-blue-500/30 border-t-blue-500 animate-spin"></div>
+                     <div className="absolute -inset-2 rounded-full border-2 border-blue-500/20 border-t-blue-500 animate-spin"></div>
                  )}
-                 <Bluetooth size={40} className="text-blue-500" />
+                 <Bluetooth size={48} className="text-blue-500" />
               </div>
               
-              <p className="text-sm font-medium text-slate-400 mb-8 text-center px-4 leading-relaxed">
-                Connect to the classroom Bluetooth Beacon to verify your physical presence and unlock the QR Reader. 
+              <p className="text-xs font-bold text-slate-400 mb-10 text-center px-6 leading-relaxed uppercase tracking-tighter opacity-80">
+                Establish proximity link with the Classroom Beacon to unlock Optical Verification.
               </p>
               
               <button 
                  onClick={connectToBeacon} 
                  disabled={status === 'BEACON_SEARCH'}
-                 className="w-full py-5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-3xl font-black uppercase tracking-widest text-[11px] shadow-lg shadow-blue-900/20 active:scale-95 transition-all flex justify-center items-center gap-3"
+                 className="w-full py-6 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-3xl font-black uppercase tracking-[0.2em] text-[10px] shadow-2xl shadow-blue-900/40 active:scale-95 transition-all flex justify-center items-center gap-3"
               >
-                  <BluetoothSearching size={18} />
-                  {status === 'BEACON_SEARCH' ? 'Scanning Proximity...' : 'Connect to Beacon'}
+                  {status === 'BEACON_SEARCH' ? (
+                    <>
+                      <Loader2 size={18} className="animate-spin" />
+                      Syncing Hardware...
+                    </>
+                  ) : (
+                    <>
+                      <BluetoothSearching size={18} />
+                      Link Beacon
+                    </>
+                  )}
               </button>
 
               {process.env.NODE_ENV === 'development' && (
-                  <button onClick={() => { setBeaconFound(true); setStatus('SCANNING'); setIsBypassed(true); }} className="mt-8 text-[11px] text-slate-600 hover:text-slate-400 uppercase tracking-widest transition-colors font-bold">
-                     Bypass (Dev/Test Mode)
+                  <button onClick={() => { setBeaconFound(true); setStatus('SCANNING'); setIsBypassed(true); }} className="mt-10 text-[9px] text-slate-700 hover:text-slate-500 uppercase tracking-widest transition-colors font-black">
+                     Secure Bypass (Dev)
                   </button>
               )}
            </div>
         ) : (
            <>
-              <p className="text-sm font-medium text-slate-400 mb-6 text-center px-4 opacity-70">
-                Point at the Laboratory QR — auto-detect is active.
+              <p className="text-[10px] font-black text-slate-500 mb-8 text-center px-4 uppercase tracking-[0.2em] italic">
+                Scanning for Institutional Signatures...
               </p>
 
               {/* UPI Scanner Interface */}
-              <div className="w-full aspect-square border-2 border-slate-700 bg-slate-800 rounded-3xl relative overflow-hidden shadow-2xl mb-6">
-                 <div id="reader" className="w-full h-full relative z-10"></div>
+              <div className="w-full aspect-square border border-white/10 bg-[#0a0a0a] rounded-[32px] relative overflow-hidden shadow-[0_40px_80px_-20px_rgba(0,0,0,0.8)] mb-8">
+                 <div id="reader" className="w-full h-full"></div>
 
                  {/* Initializing Overlay */}
                  {isScannerStarting && (
-                   <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm flex flex-col items-center justify-center z-40">
-                     <Loader2 size={40} className="animate-spin text-blue-500 mb-4" />
-                     <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Initializing Optic Node...</p>
+                   <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center z-40">
+                     <Loader2 size={40} className="animate-spin text-blue-500 mb-6" />
+                     <p className="text-[9px] font-black uppercase tracking-[0.3em] text-white/40">Awakening Optics...</p>
                    </div>
                  )}
 
                  {/* Laser Sync + Corner Brackets */}
                  {localTxState === 'IDLE' && !isScannerStarting && (
                    <>
-                     <div className="absolute top-[10%] left-[10%] right-[10%] bottom-[10%] border-2 border-emerald-500/40 rounded-2xl z-20 pointer-events-none">
-                       <div className="absolute top-0 left-0 w-6 h-6 border-t-4 border-l-4 border-emerald-500 rounded-tl-lg" />
-                       <div className="absolute top-0 right-0 w-6 h-6 border-t-4 border-r-4 border-emerald-500 rounded-tr-lg" />
-                       <div className="absolute bottom-0 left-0 w-6 h-6 border-b-4 border-l-4 border-emerald-500 rounded-bl-lg" />
-                       <div className="absolute bottom-0 right-0 w-6 h-6 border-b-4 border-r-4 border-emerald-500 rounded-br-lg" />
+                     <div className="absolute top-[12.5%] left-[12.5%] right-[12.5%] bottom-[12.5%] border border-emerald-500/20 rounded-3xl z-20 pointer-events-none">
+                       <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-emerald-500 rounded-tl-2xl shadow-[-5px_-5px_15px_-5px_#10b981]" />
+                       <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-emerald-500 rounded-tr-2xl shadow-[5px_-5px_15px_-5px_#10b981]" />
+                       <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-emerald-500 rounded-bl-2xl shadow-[-5px_5px_15px_-5px_#10b981]" />
+                       <div className="absolute bottom-0 right-0 w-10 h-10 border-b-4 border-r-4 border-emerald-500 rounded-br-2xl shadow-[5px_5px_15px_-5px_#10b981]" />
                      </div>
-                     <div className="absolute left-[15%] right-[15%] h-[2px] bg-emerald-500 shadow-[0_0_15px_#10b981] z-20 pointer-events-none" style={{ animation: 'scanner-laser 2s infinite linear' }} />
+                     <div className="absolute left-[15%] right-[15%] h-[4px] bg-gradient-to-r from-transparent via-emerald-500 to-transparent shadow-[0_0_20px_#10b981] z-20 pointer-events-none" style={{ animation: 'scanner-laser 1.5s infinite linear' }} />
                    </>
                  )}
 
                  {/* Verifying Overlay */}
                  {localTxState === 'VERIFYING' && (
-                   <div className="absolute inset-0 bg-blue-600/60 backdrop-blur-md flex flex-col items-center justify-center text-white z-40 animate-in zoom-in duration-300">
-                     <div className="relative mb-6">
-                       <div className="w-20 h-20 bg-white/20 border-2 border-white/50 rounded-full flex items-center justify-center animate-pulse">
-                         <ShieldCheck size={32} />
+                   <div className="absolute inset-0 bg-blue-600/80 backdrop-blur-xl flex flex-col items-center justify-center text-white z-40 animate-in zoom-in duration-300">
+                     <div className="relative mb-8">
+                       <div className="w-24 h-24 bg-white/10 border border-white/20 rounded-full flex items-center justify-center animate-pulse">
+                         <ShieldCheck size={40} />
                        </div>
-                       <div className="absolute inset-0 rounded-full border-2 border-white" style={{ animation: 'pulse-ring 1s infinite' }} />
+                       <div className="absolute inset-x-[-10px] inset-y-[-10px] rounded-full border border-white/30" style={{ animation: 'pulse-ring 1s infinite' }} />
                      </div>
-                     <p className="text-[10px] font-black uppercase tracking-[0.3em] italic">Handshake Active</p>
+                     <p className="text-[10px] font-black uppercase tracking-[0.4em] italic leading-none">Securing Handshake</p>
                    </div>
                  )}
 
                  {/* Success Overlay */}
                  {localTxState === 'SUCCESS' && (
                    <div className="absolute inset-0 bg-emerald-500 flex flex-col items-center justify-center text-white z-[50] animate-in zoom-in duration-300">
-                     <CircleCheckBig size={64} className="mb-4 animate-bounce" />
-                     <p className="text-xs font-black uppercase tracking-[0.4em]">Presence Anchored</p>
+                     <CircleCheckBig size={80} className="mb-6 animate-bounce" />
+                     <p className="text-xs font-black uppercase tracking-[0.5em]">Identity Anchored</p>
                    </div>
                  )}
 
                  {/* Error Overlay (auto-recoverable) */}
                  {(localTxState === 'ERROR' || localTxState === 'INVALID_QR') && (
-                   <div className="absolute inset-0 bg-rose-500 flex flex-col items-center justify-center p-8 text-center text-white z-[50] animate-in fade-in duration-300">
-                     <TriangleAlert size={40} className="mb-4" />
-                     <p className="text-[10px] font-black uppercase tracking-widest mb-2">Sync Interrupted</p>
-                     <p className="text-[9px] font-bold text-white/80 leading-relaxed italic">{errorMessage || "Invalid QR Structure"}</p>
-                     <p className="mt-8 text-[8px] font-black uppercase tracking-widest opacity-50 animate-pulse">Retrying Interface...</p>
+                   <div className="absolute inset-0 bg-rose-600 flex flex-col items-center justify-center p-10 text-center text-white z-[50] animate-in fade-in duration-300">
+                     <div className="w-20 h-20 bg-white/10 rounded-full flex items-center justify-center mb-6">
+                        <TriangleAlert size={48} />
+                     </div>
+                     <p className="text-[11px] font-black uppercase tracking-widest mb-4">Verification Fault</p>
+                     <p className="text-[10px] font-bold text-white/90 leading-relaxed italic mb-10">{errorMessage || "Invalid QR Protocol"}</p>
+                     <div className="w-full h-1 bg-white/20 rounded-full overflow-hidden">
+                        <div className="h-full bg-white animate-[progress_3s_linear]" style={{ width: '100%' }} />
+                     </div>
+                     <p className="mt-4 text-[9px] font-black uppercase tracking-[0.2em] opacity-60">Re-initializing Live Feed...</p>
                    </div>
                  )}
               </div>
@@ -414,38 +468,39 @@ export default function StudentScanPage() {
               <div id="file-qr-buffer" style={{ display: 'none' }} aria-hidden="true" />
 
               {/* File Upload Fallback */}
-              <div className="w-full p-4 bg-slate-800/50 rounded-2xl border border-slate-700/30 relative overflow-hidden">
+              <div className="w-full p-4 bg-slate-900/50 rounded-3xl border border-white/5 relative overflow-hidden group">
                 {isProcessingFile && (
-                  <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center">
+                  <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-10 flex flex-col items-center justify-center">
                     <Loader2 size={24} className="animate-spin text-blue-500 mb-2" />
-                    <p className="text-[9px] font-black text-blue-400 uppercase tracking-widest">Optimizing...</p>
+                    <p className="text-[9px] font-black text-blue-500 uppercase tracking-widest">Optimizing Node...</p>
                   </div>
                 )}
-                <label>
+                <label className="block w-full">
                   <input type="file" accept="image/*" onChange={handleFileScan} className="hidden" />
-                  <div className="flex items-center justify-center gap-2 py-3 bg-slate-700/50 hover:bg-slate-700 border border-slate-600/50 hover:border-blue-500 text-slate-400 hover:text-blue-400 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer">
-                    <Upload size={14} />
-                    Analyze Signature File
+                  <div className="flex items-center justify-center gap-3 py-4 bg-slate-800 hover:bg-slate-700 border border-slate-700 group-hover:border-blue-500/50 text-slate-500 group-hover:text-blue-400 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all cursor-pointer select-none">
+                    <Upload size={16} />
+                    Import Static Signature
                   </div>
                 </label>
               </div>
 
-              <div className="w-full mt-4 p-4 bg-emerald-900/20 rounded-2xl border border-emerald-800/30 flex items-center gap-4">
-                 <div className="w-10 h-10 rounded-xl bg-emerald-500/20 flex items-center justify-center text-emerald-500">
-                    <ShieldCheck size={20} />
+              <div className="w-full mt-6 p-5 bg-emerald-500/5 rounded-3xl border border-emerald-500/10 flex items-center gap-5">
+                 <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 shadow-inner">
+                    <ShieldCheck size={24} />
                  </div>
                  <div className="flex-1">
-                    <p className="text-[11px] font-black text-emerald-500/70 uppercase tracking-widest">UPI Matrix Mode</p>
-                    <p className="text-[13px] font-bold text-emerald-400">Point & Detect Active</p>
+                    <p className="text-[10px] font-black text-emerald-500/50 uppercase tracking-[0.2em]">UPI Matrix Alpha</p>
+                    <p className="text-sm font-black text-emerald-400 tracking-tight uppercase italic">Secure Handshake Active</p>
                  </div>
               </div>
            </>
         )}
 
-        <div className="mt-12 text-center opacity-40">
-           <p className="text-[9px] font-black uppercase tracking-[0.2em] text-slate-300">LabIntelligence™ Security</p>
+        <div className="mt-16 text-center opacity-20">
+           <p className="text-[10px] font-black uppercase tracking-[0.4em] text-white">SD-DASHBOARD v3.0</p>
         </div>
       </div>
+
     </div>
   );
 }
