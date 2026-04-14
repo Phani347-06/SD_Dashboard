@@ -13,7 +13,8 @@ import {
   StopCircle,
   Loader2,
   CheckCircle2,
-  ShieldCheck
+  ShieldCheck,
+  Zap
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "@/lib/supabase";
@@ -22,6 +23,7 @@ export default function AttendancePage() {
   const [session, setSession] = useState<any>(null);
   const [tempSession, setTempSession] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [isQuickStarting, setIsQuickStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [logs, setLogs] = useState<any[]>([]);
   const [elapsed, setElapsed] = useState("00h 00m 00s");
@@ -151,42 +153,96 @@ export default function AttendancePage() {
     }
   }, [session]);
 
-  const startNewSession = async () => {
-    if (!selectedLabId) {
-        setError("Institutional Error: Laboratory Node must be selected.");
-        return;
+  const startNewSession = async (labIdOverride?: string) => {
+    const targetLabId = labIdOverride || selectedLabId;
+    if (!targetLabId) {
+      setError("Please select a laboratory node to manifest.");
+      return;
     }
 
     setLoading(true);
-    setError(null);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error("Unauthorized Access Detection.");
-
-      const selectedLab = facultyLabs.find(l => l.id === selectedLabId);
-
-      // 1. Create a Master Class Session
-      const { data: newSession, error: sError } = await supabase
+      // 1. Create Class Session
+      const { data: sessionData, error: sessionError } = await supabase
         .from('class_sessions')
         .insert({
-          lab_id: selectedLabId,
-          course_code: selectedLab.name,
+          lab_id: targetLabId,
           teacher_id: user.id,
+          course_code: 'VANGUARD-101', // Default course code for quick start
           date: new Date().toISOString().split('T')[0],
           status: 'ACTIVE'
         })
-        .select('*, labs(name)')
+        .select()
         .single();
-      
-      if (sError) throw sError;
-      setSession(newSession);
 
-      // 2. Generate initial Rolling Token
-      await generateNewToken(newSession.id);
+      if (sessionError) throw sessionError;
+
+      // 2. Create Initial Temp Session (QR Token)
+      const { error: tempError } = await supabase
+        .from('temp_qr_sessions')
+        .insert({
+          class_session_id: sessionData.id,
+          verification_code: Math.random().toString(36).substring(2, 15),
+          expires_at: new Date(Date.now() + 30000).toISOString(),
+          is_active: true
+        });
+
+      if (tempError) throw tempError;
+
+      setSession(sessionData);
+      setSelectedLabId(targetLabId);
     } catch (err: any) {
-      setError("Handshake Failure: " + (err.message || "Database node unreachable."));
+      setError(err.message || "Initialization Protocol Failure");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleQuickStart = async () => {
+    setIsQuickStarting(true);
+    setError(null);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+
+    try {
+      // 1. Check if "Lab Room 101" exists
+      let { data: existingLab } = await supabase
+        .from('labs')
+        .select('id')
+        .eq('created_by', user.id)
+        .eq('name', 'Lab Room 101')
+        .single();
+
+      let targetLabId = existingLab?.id;
+
+      // 2. Create if not exists
+      if (!targetLabId) {
+        const { data: newLab, error: labError } = await supabase
+          .from('labs')
+          .insert({
+            name: 'Lab Room 101',
+            description: 'Automated Testing Node',
+            created_by: user.id
+          })
+          .select()
+          .single();
+        
+        if (labError) throw labError;
+        targetLabId = newLab.id;
+        
+        // Update local labs list
+        setFacultyLabs(prev => [newLab, ...prev]);
+      }
+
+      // 3. Start Session
+      await startNewSession(targetLabId);
+    } catch (err: any) {
+      setError(err.message || "Quick-Start Integrity Breach");
+    } finally {
+      setIsQuickStarting(false);
     }
   };
 
@@ -324,17 +380,24 @@ export default function AttendancePage() {
             Command Center:<br />
             {session ? session.labs?.name : (
                 <div className="flex items-center gap-4 mt-2">
-                    <select 
-                        disabled={!!session}
-                        value={selectedLabId}
-                        onChange={(e) => setSelectedLabId(e.target.value)}
-                        className="bg-white border border-slate-200 rounded-2xl px-6 py-3 text-[16px] font-black tracking-tight text-[#0052a5] focus:outline-none focus:ring-4 focus:ring-blue-500/10 min-w-[300px]"
-                    >
-                        <option value="">Select Laboratory Node</option>
-                        {facultyLabs.map(lab => (
-                            <option key={lab.id} value={lab.id}>{lab.name}</option>
-                        ))}
-                    </select>
+                    {facultyLabs.length > 0 ? (
+                      <select 
+                          disabled={!!session}
+                          value={selectedLabId}
+                          onChange={(e) => setSelectedLabId(e.target.value)}
+                          className="bg-white border border-slate-200 rounded-2xl px-6 py-3 text-[16px] font-black tracking-tight text-[#0052a5] focus:outline-none focus:ring-4 focus:ring-blue-500/10 min-w-[300px]"
+                      >
+                          <option value="">Select Laboratory Node</option>
+                          {facultyLabs.map(lab => (
+                              <option key={lab.id} value={lab.id}>{lab.name}</option>
+                          ))}
+                      </select>
+                    ) : (
+                      <div className="flex items-center gap-3 bg-amber-50 border border-amber-100 px-6 py-3 rounded-2xl animate-pulse">
+                         <ShieldCheck className="text-amber-500" size={18} />
+                         <span className="text-[13px] font-black text-amber-700 uppercase tracking-widest">No Active Nodes Detected</span>
+                      </div>
+                    )}
                 </div>
             )}
           </h1>
@@ -392,14 +455,26 @@ export default function AttendancePage() {
 
             <div className="w-full space-y-4 relative z-10">
               <button 
-                onClick={startNewSession}
-                disabled={!!session || loading}
+                onClick={() => startNewSession()}
+                disabled={!!session || loading || facultyLabs.length === 0}
                 className="w-full py-5 bg-[#0052a5] hover:bg-[#00438a] text-white rounded-3xl text-[11px] font-black uppercase tracking-[0.2em] shadow-xl shadow-blue-900/20 transition-all flex items-center justify-center gap-3 disabled:opacity-50 disabled:scale-100 active:scale-95"
               >
                  {loading ? <Loader2 className="animate-spin" size={18} /> : (
                    <><Play size={18} fill="currentColor" stroke="none" /> {session ? 'Session Locked' : 'Manifest Protocol'}</>
                  )}
               </button>
+
+              {/* Quick Start Automation Button */}
+              {!session && (
+                <button 
+                  onClick={handleQuickStart}
+                  disabled={isQuickStarting}
+                  className="w-full py-4 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-100 rounded-3xl text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 active:scale-95"
+                >
+                  {isQuickStarting ? <Loader2 className="animate-spin" size={16} /> : <Zap size={16} fill="currentColor" stroke="none" />}
+                  Quick Start: Room 101
+                </button>
+              )}
               
               <button 
                 onClick={togglePause}

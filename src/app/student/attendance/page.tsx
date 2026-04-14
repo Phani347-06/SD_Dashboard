@@ -167,7 +167,7 @@ export default function AttendancePage() {
             
             const device = await navigator.bluetooth.requestDevice({
                 filters: [
-                    { namePrefix: 'Lab Beacon' },
+                    { namePrefix: 'LabBeacon' },
                     { services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] }
                 ],
                 optionalServices: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c']
