@@ -68,15 +68,13 @@ export async function POST(req: Request) {
     // 2. Device Fingerprint Binding Validation
     if (session.fingerprint_hash !== fingerprint_hash) {
       console.log("ATTENDANCE_DEBUG: Device fingerprint mismatch.");
-      // Security Breach: Purge session artifact immediately
-      await supabase.from('sessions').delete().eq('temp_session_id', temp_session_id);
-      return NextResponse.json({ error: 'Device mismatch — session terminated' }, { status: 401 });
+      // Soft Guard: We no longer purge the session artifact to allow for retry/debug.
+      return NextResponse.json({ error: 'Device mismatch detected. Ensure you are using the same browser node used for login.' }, { status: 401 });
     }
 
     // 3. Expiration Pulse
     if (new Date(session.expires_at) < new Date()) {
       console.log("ATTENDANCE_DEBUG: Session expired chronologically.");
-      await supabase.from('sessions').delete().eq('temp_session_id', temp_session_id);
       return NextResponse.json({ error: 'Session expired — please login again' }, { status: 401 });
     }
 

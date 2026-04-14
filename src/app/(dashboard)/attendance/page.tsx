@@ -328,12 +328,27 @@ export default function AttendancePage() {
    };
 
   // 🛡️ STABILITY GUARD: Anchor QR expiry to the manifested temp session node 
-  // Subtracting 120s (2m grace) from DB expires_at to get the 10m display validity.
   const qrExpiry = tempSession?.expires_at 
     ? Math.floor(new Date(tempSession.expires_at).getTime() / 1000) - 120 
     : Math.floor((Date.now() + 600000) / 1000);
 
   const qrValue = `v2|${session?.id || ''}|${tempSession?.temp_session_id || ''}|${tempSession?.verification_code || ''}|${qrExpiry}`;
+
+  // 🛰️ Diagnostic: Protocol Sync Logger
+  useEffect(() => {
+    if (tempSession) {
+      console.info("MATRIX_PROTOCOL_V2: Token Rotation Manifested.", {
+        class_id: session?.id,
+        token_id: tempSession.temp_session_id,
+        v_code: tempSession.verification_code,
+        expiry: qrExpiry,
+        payload: qrValue
+      });
+      // Synchronize display countdown with real protocol expiry
+      const remaining = Math.max(0, qrExpiry - Math.floor(Date.now() / 1000));
+      setRotationCountdown(remaining);
+    }
+  }, [tempSession?.temp_session_id, qrExpiry, qrValue]);
 
    return (
      <div className="flex flex-col h-full bg-[#f8fafc] text-slate-900 pb-12 w-full max-w-[1400px] mx-auto overflow-y-auto animate-in fade-in duration-700">

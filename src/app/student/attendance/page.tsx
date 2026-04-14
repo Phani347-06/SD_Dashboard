@@ -395,18 +395,19 @@ export default function AttendancePage() {
             if (decodedText.startsWith('v2|')) {
                 const parts = decodedText.split('|');
                 if (parts.length < 5) {
-                    throw new Error("MALFORMED_SIGNATURE_V2: Extended QR structure is incomplete.");
+                    throw new Error("MALFORMED_SIGNATURE_V2: Scanned code metadata is incomplete. Please ensure you are scanning the official dashboard QR.");
                 }
+                const expiry = parseInt(parts[4]);
                 data = {
                     s_id: parts[1],
                     t_id: parts[2],
                     v_code: parts[3],
-                    exp: parseInt(parts[4])
+                    exp: isNaN(expiry) ? undefined : expiry
                 };
             } else if (decodedText.startsWith('v1|')) {
                 const parts = decodedText.split('|');
                 if (parts.length < 4) {
-                    throw new Error("MALFORMED_SIGNATURE: Compact QR structure is incomplete.");
+                    throw new Error("MALFORMED_SIGNATURE: Legacy format detected but incomplete.");
                 }
                 data = {
                     s_id: parts[1],
@@ -418,13 +419,18 @@ export default function AttendancePage() {
                     data = JSON.parse(decodedText);
                 } catch (e) {
                     console.error("QR Parse Error:", e);
-                    throw new Error("INVALID_FORMAT: The scanned code is not a valid attendance signature.");
+                    throw new Error("INVALID_FORMAT: Scanned data is not a recognized attendance signature. Ensure you are scanning the Matrix QR.");
                 }
             }
 
             // 🛑 QR Expiry Check (Critical for Security)
-            if (data.exp && data.exp < Math.floor(Date.now() / 1000)) {
-                throw new Error("QR Signature Expired. Please ask the faculty to refresh the code.");
+            // Added 30s clock-drift leeway to prevent premature rejection on misaligned device clocks.
+            if (data.exp) {
+                const now = Math.floor(Date.now() / 1000);
+                const driftLeeway = 30; 
+                if (data.exp < (now - driftLeeway)) {
+                    throw new Error(`QR Signature Expired (${Math.abs(now - data.exp)}s ago). Please ask the faculty to refresh the code.`);
+                }
             }
 
             // 🛡️ Matrix Identity Verification (ID Resynchronization)
@@ -441,11 +447,13 @@ export default function AttendancePage() {
                 if (!sError && scannedSession && scannedSession.lab_id === selectedLab?.id) {
                     console.info("✅ Resync Success: Anchoring to scanned session node.");
                     setActiveSession(scannedSession);
+                } else if (!selectedLab) {
+                    throw new Error("IDENTITY_DESYNC: Lab context lost. Please return to the lab selection screen.");
                 } else {
                     // 2. Fallback: Try general lab sync (already updated with created_at ordering)
                     const recovered = await syncActiveSession();
                     if (!recovered || recovered.id !== data.s_id) {
-                        throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
+                        throw new Error(`Mismatched Laboratory Node. Scanned ID (${data.s_id}) does not match active lab context.`);
                     }
                     console.info("Matrix Recovery: Handshake Resynchronized.");
                 }
@@ -456,15 +464,28 @@ export default function AttendancePage() {
 
             const isSubmitted = await handleSubmitAttendance(data);
 
+            // If submission failed, handleSubmitAttendance already set the error and localTxState to ERROR.
+            // We only proceed to CONFIRMED if it actually succeeded.
             if (isSubmitted) {
                 setTimeout(() => setStatus('CONFIRMED'), 800);
+            } else {
+                // Return local state to IDLE after a delay if submission failed but didn't throw
+                setTimeout(() => {
+                    setLocalTxState('IDLE');
+                    if (scannerRef.current && !scannerRef.current.isScanning) {
+                        try { scannerRef.current.resume(); } catch (e) { }
+                    }
+                }, 3000);
             }
 
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : String(err);
             console.error("Scan Sequence Interrupted:", errorMessage);
-            setErrorMessage(errorMessage || "Invalid Matrix QR Signature detected.");
+            
+            // SECURITY: Never show an empty error message to avoid confusing the student
+            setErrorMessage(errorMessage || "PROTOCOL_ERROR: Matrix signature validation failed unexpectedly.");
             setLocalTxState('INVALID_QR');
+            
             setTimeout(() => {
                 setLocalTxState('IDLE');
                 setErrorMessage(null);
