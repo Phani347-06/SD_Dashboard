@@ -12,7 +12,7 @@
 // Backend Server Configuration
 // ⚠️ DEVELOPMENT: "http://192.168.1.15:3000/api/esp32/status"
 // 🚀 PRODUCTION:  "https://YOUR-APP-NAME.vercel.app/api/esp32/status"
-#define SERVER_URL "http://192.168.1.15:3000/api/esp32/status"
+#define SERVER_URL "https://sd-dashboard-vnr.vercel.app/api/esp32/status"
 #define HEARTBEAT_INTERVAL 30000  // Send status every 30 seconds
 
 // Unique iBeacon UUID for Smart Lab Attendance System
@@ -33,6 +33,7 @@ bool wifiConnected = false;
 
 void setup() {
   Serial.begin(115200);
+  delay(2000);  // Wait for serial monitor to connect
   Serial.println("\n\nStarting iBeacon Firmware for Smart Lab Attendance System...");
   
   bootTime = millis();
@@ -78,13 +79,7 @@ void setup() {
 
   BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
   oAdvertisementData.setFlags(0x06); // General Discoverable + BR/EDR Not Supported
-  
-  // Build iBeacon manufacturer data payload
-  std::string strServiceData = "";
-  strServiceData += (char)26;   // Length of iBeacon data
-  strServiceData += (char)0xFF; // Manufacturer Specific Data type
-  strServiceData += oBeacon.getData();
-  oAdvertisementData.addData(strServiceData);
+  oAdvertisementData.setManufacturerData(oBeacon.getData());
 
   // --- Packet 2: Scan Response Data (Service UUID + Name) ---
   BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
