@@ -100,7 +100,7 @@ export default function AttendancePage() {
     if (session && (session.created_at || session.date)) {
       interval = setInterval(() => {
         const startTime = session.created_at ? new Date(session.created_at).getTime() : new Date(session.date).getTime();
-        const now = new Date().getTime();
+        const now = Date.now();
         const diff = now - startTime;
         
         if (diff < 0) {
@@ -335,7 +335,7 @@ export default function AttendancePage() {
     ? Math.floor(new Date(tempSession.expires_at).getTime() / 1000) - 120 
     : Math.floor((Date.now() + 600000) / 1000);
 
-  const qrValue = `v2|${session?.id || ''}|${tempSession?.temp_session_id || ''}|${tempSession?.verification_code || ''}|${qrExpiry}`;
+  const qrValue = `v2|${(session?.id || '').trim()}|${(tempSession?.temp_session_id || '').trim()}|${(tempSession?.verification_code || '').trim()}|${qrExpiry}`;
 
   // 🛰️ Diagnostic: Protocol Sync Logger
   useEffect(() => {

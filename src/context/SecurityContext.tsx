@@ -59,6 +59,8 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
               .eq('student_id', authSession.user.id)
               .eq('is_active', true)
               .gt('expires_at', new Date().toISOString())
+              .order('created_at', { ascending: false })
+              .limit(1)
               .maybeSingle();
             
             if (sessionNode && sessionNode.fingerprint_hash === hash) {
@@ -101,18 +103,21 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
           
           // 🧹 INSTITUTIONAL CLEANUP: Direct Removal of irrelevant data
           // A: Remove sessions from DIFFERENT devices (fingerprints)
+          // A: Deactivate sessions from DIFFERENT devices (fingerprints)
           await supabase
             .from('sessions')
-            .delete()
+            .update({ is_active: false })
             .eq('student_id', authSession.user.id)
-            .neq('fingerprint_hash', hash);
+            .neq('fingerprint_hash', hash)
+            .eq('is_active', true);
 
-          // B: Sweep chronological detritus (Expired sessions for this student)
+          // B: Sweep chronological detritus (Deactivate expired sessions for this student)
           await supabase
             .from('sessions')
-            .delete()
+            .update({ is_active: false })
             .eq('student_id', authSession.user.id)
-            .lt('expires_at', new Date().toISOString());
+            .lt('expires_at', new Date().toISOString())
+            .eq('is_active', true);
 
           // C: Global Maintenance Sweep (Purge sessions > 30 days old to manage DB size)
           const thirtyDaysAgo = new Date();

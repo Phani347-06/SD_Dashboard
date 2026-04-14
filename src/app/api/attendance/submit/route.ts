@@ -54,12 +54,14 @@ export async function POST(req: Request) {
     }
 
     // 1. Session Integrity Node Check
-    const { data: session, error: sessionError } = await supabase
+    const { data: session, error: sessionError } = await (supabaseAdmin || supabase)
       .from('sessions')
       .select('*, students(*)')
       .eq('temp_session_id', temp_session_id)
       .eq('is_active', true)
-      .single();
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     if (sessionError || !session) {
       console.log("ATTENDANCE_DEBUG: Session invalid or expired for ID:", mask(temp_session_id));
@@ -87,6 +89,8 @@ export async function POST(req: Request) {
       .eq('temp_session_id', qr_token_id) 
       .eq('class_session_id', class_session_id) 
       .eq('verification_code', v_code_final)
+      .order('expires_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (qrError || !qrSession) {
@@ -102,7 +106,7 @@ export async function POST(req: Request) {
     // ⏳ CHRONOLOGICAL RIGIDITY CHECK
     const expiresAt = new Date(qrSession.expires_at).getTime();
     const now = Date.now();
-    const graceWindow = 10000; // 10s grace period for synchronized rotation
+    const graceWindow = 120000; // 120s (2m) grace period for synchronized rotation & clock drift
 
     // Removed is_active check as per Hard Deletion Protocol
     if (now > (expiresAt + graceWindow)) {
