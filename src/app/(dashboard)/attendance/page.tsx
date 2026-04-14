@@ -32,6 +32,7 @@ export default function AttendancePage() {
   const [facultyLabs, setFacultyLabs] = useState<any[]>([]);
   const [selectedLabId, setSelectedLabId] = useState<string>("");
   const [isQrZoomed, setIsQrZoomed] = useState(false);
+  const [rotationCountdown, setRotationCountdown] = useState(30);
 
   // Fetch Labs and Active Session
   useEffect(() => {
@@ -199,12 +200,19 @@ export default function AttendancePage() {
   const generateNewToken = async (sessionId: string) => {
     setLoading(true);
     try {
+       // 🛡️ RIGID PROTOCOL: Invalidate existing tokens first for atomicity
+       await supabase
+          .from('temp_qr_sessions')
+          .update({ is_active: false })
+          .eq('class_session_id', sessionId)
+          .eq('is_active', true);
+
        const { data: newToken, error: tError } = await supabase
           .from('temp_qr_sessions')
           .insert({
             class_session_id: sessionId, 
             verification_code: Math.floor(100000 + Math.random() * 900000).toString(),
-            expires_at: new Date(Date.now() + 86400000).toISOString(),
+            expires_at: new Date(Date.now() + 45000).toISOString(), // Rigid 45s window
             is_active: true
           })
           .select()
@@ -212,12 +220,39 @@ export default function AttendancePage() {
        
        if (tError) throw tError;
        setTempSession(newToken);
+       console.log("🛰️ Matrix Rotated: New identity token manifested.");
     } catch (err: any) {
        setError("Token Manifestation Failure: " + err.message);
     } finally {
        setLoading(false);
     }
   };
+
+  // 🔄 RIGID QR ROTATION PROTOCOL
+  // Automatically rotates the QR node every 30 seconds to prevent session theft.
+  useEffect(() => {
+    let rotationInterval: any;
+    let timerInterval: any;
+    
+    if (session?.id && tempSession?.is_active) {
+       // Main rotation logic
+       rotationInterval = setInterval(() => {
+          console.log("🔄 Triggering Scheduled Matrix Rotation...");
+          generateNewToken(session.id);
+          setRotationCountdown(30);
+       }, 30000); // 30s strict rotation
+
+       // UI Timer logic
+       timerInterval = setInterval(() => {
+          setRotationCountdown(prev => (prev <= 1 ? 30 : prev - 1));
+       }, 1000);
+    }
+
+    return () => {
+      if (rotationInterval) clearInterval(rotationInterval);
+      if (timerInterval) clearInterval(timerInterval);
+    };
+  }, [session?.id, tempSession?.is_active]);
 
    const togglePause = async () => {
      let targetId = tempSession?.temp_session_id;

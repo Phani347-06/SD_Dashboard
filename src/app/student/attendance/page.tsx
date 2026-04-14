@@ -57,7 +57,7 @@ interface AttendanceQrPayload {
 export default function AttendancePage() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { tempSessionId, fingerprintHash } = useSecurity();
+    const { tempSessionId, fingerprintHash, isVerifying } = useSecurity();
 
     const [isTestMode, setIsTestMode] = useState(false);
 
@@ -79,6 +79,7 @@ export default function AttendancePage() {
     const [isScannerStarting, setIsScannerStarting] = useState(false);
     const [localTxState, setLocalTxState] = useState<'IDLE' | 'VERIFYING' | 'SUCCESS' | 'ERROR' | 'INVALID_QR'>('IDLE');
     const scannerRef = useRef<Html5Qrcode | null>(null);
+    const lastScanTimeRef = useRef<number>(0);
     const latestOnScanSuccessRef = useRef<(text: string) => Promise<void>>(async () => { });
 
     // 1. Initial Identity & Lab Roster Fetch
@@ -88,9 +89,13 @@ export default function AttendancePage() {
             if (!user) { router.push('/login'); return; }
 
             // Fetch Enrolled Labs
-            console.log("🛰️ Hub Sync Initiated for Student:", user.id);
+            console.info("🛰️ Hub Sync Initiated for Student:", user.id);
+            const enrollController = new AbortController();
+            const enrollTimeout = setTimeout(() => enrollController.abort(), 15000);
+            
             try {
-                const enrollRes = await fetch('/api/enrollment');
+                const enrollRes = await fetch('/api/enrollment', { signal: enrollController.signal });
+                clearTimeout(enrollTimeout);
                 const enrollData = await enrollRes.json();
 
                 if (enrollData.success) {
@@ -105,20 +110,29 @@ export default function AttendancePage() {
                 } else {
                     setErrorMessage(`Enrollment Sync Error: ${enrollData.error || "Unknown response protocol"}`);
                 }
-            } catch (err) {
-                console.error("❌ Enrollment API Failure:", err);
-                setErrorMessage("SYSTEM: Enrollment handoff failed. Check network or permissions.");
+            } catch (err: unknown) {
+                clearTimeout(enrollTimeout);
+                if (err instanceof Error && err.name === 'AbortError') {
+                    setErrorMessage("Sync Timeout: Enrollment ledger unresponsive. Please check your connection.");
+                } else {
+                    console.error("❌ Enrollment API Failure:", err);
+                    setErrorMessage("SYSTEM: Enrollment handoff failed. Check network or permissions.");
+                }
             }
 
             // Fetch Attendance Logs
+            const logsController = new AbortController();
+            const logsTimeout = setTimeout(() => logsController.abort(), 15000);
             try {
-                const logsRes = await fetch('/api/attendance/logs?limit=10');
+                const logsRes = await fetch('/api/attendance/logs?limit=10', { signal: logsController.signal });
+                clearTimeout(logsTimeout);
                 const logsData = await logsRes.json();
                 if (logsData.success) {
                     setAttendanceLogs(logsData.logs);
                 }
             } catch (err) {
-                console.error("❌ Ledger API Failure:", err);
+                clearTimeout(logsTimeout);
+                console.warn("⚠️ Ledger API Latency/Failure:", err);
             }
 
             setLoading(false);
@@ -158,7 +172,7 @@ export default function AttendancePage() {
                 return sessions;
             }
         } catch (err) {
-            console.error("Sync Failure:", err);
+            console.error("Session Sync Failure:", err);
         }
         return null;
     };
@@ -200,9 +214,26 @@ export default function AttendancePage() {
                 optionalServices: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c']
             });
 
-            // Step 2: PROXIMITY VERIFICATION (GATT Handshake)
+            // Step 2: STRICT HARDWARE VALIDATION (POST-REQUEST)
+            // Even if namePrefix passes, we verify the start of the name explicitly.
+            if (!device.name?.startsWith('LabBeacon')) {
+                throw new Error("UNAUTHORIZED_HARDWARE: The detected device is not a certified LabBeacon node.");
+            }
+
+            // Step 3: PROXIMITY VERIFICATION (GATT Handshake)
             // Real proximity proof: connect and read a characteristic
-            const server = await device.gatt?.connect();
+            
+            // 🛡️ GATT Connection Timeout Guard
+            const connectPromise = device.gatt?.connect();
+            if (!connectPromise) throw new Error("Hardware Error: GATT interface unavailable.");
+
+            const server = await Promise.race([
+                connectPromise,
+                new Promise<never>((_, reject) => 
+                    setTimeout(() => reject(new Error("HANDSHAKE_TIMEOUT: ESP32 node unresponsive. Move closer or restart Bluetooth.")), 10000)
+                )
+            ]);
+
             if (!server) throw new Error("Hardware Handshake Failed: Could not connect to the LabBeacon GATT server.");
 
             try {
@@ -210,9 +241,14 @@ export default function AttendancePage() {
                 const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
                 await characteristic.readValue(); // Verifies physical proximity by reading a protected value
             } finally {
-                // BUG: Ensure we disconnect even if handshake read fails
+                // 🛡️ Safer Disconnect Implementation
                 if (device.gatt?.connected) {
-                    device.gatt.disconnect();
+                    try {
+                        device.gatt.disconnect();
+                        console.info("Hardware Handoff: BLE connection released.");
+                    } catch (e) {
+                        console.warn("BLE Cleanup Warning:", e);
+                    }
                 }
             }
 
@@ -232,7 +268,7 @@ export default function AttendancePage() {
                 return;
             }
 
-            console.log("✅ Digital Session Locked:", sessions.id);
+            console.info("✅ Digital Session Locked:", sessions.id);
             setStatus('BEACON_LOCKED');
         } catch (err: unknown) {
             console.error("Proximity Check Failed:", err);
@@ -335,16 +371,23 @@ export default function AttendancePage() {
     }, [status]);
 
     async function onScanSuccess(decodedText: string) {
+        // 🛡️ Time-based Scan Debounce (1.5s)
+        const now = Date.now();
+        if (now - lastScanTimeRef.current < 1500) return;
+        lastScanTimeRef.current = now;
+
         // Prevent double-processing during existing transitions
         if (localTxState !== 'IDLE') return;
 
-        console.log("QR DETECTED:", decodedText);
+        console.info("QR DETECTED:", decodedText);
         try {
             if (typeof navigator !== 'undefined' && navigator.vibrate) {
                 navigator.vibrate(100);
             }
 
-            if (scannerRef.current) await scannerRef.current.pause(true);
+            if (scannerRef.current && scannerRef.current.isScanning) {
+                await scannerRef.current.pause(true);
+            }
 
             setLocalTxState('VERIFYING');
             
@@ -352,16 +395,24 @@ export default function AttendancePage() {
             let data: AttendanceQrPayload & { exp?: number };
             if (decodedText.startsWith('v1|')) {
                 const parts = decodedText.split('|');
+                if (parts.length < 4) {
+                    throw new Error("MALFORMED_SIGNATURE: Compact QR structure is incomplete.");
+                }
                 data = {
                     s_id: parts[1],
                     t_id: parts[2],
                     v_code: parts[3]
                 };
             } else {
-                data = JSON.parse(decodedText);
+                try {
+                    data = JSON.parse(decodedText);
+                } catch (e) {
+                    console.error("QR Parse Error:", e);
+                    throw new Error("INVALID_FORMAT: The scanned code is not a valid attendance signature.");
+                }
             }
 
-            // 🛑 Issue #5: QR Expiry Check (Critical for Security)
+            // 🛑 QR Expiry Check (Critical for Security)
             if (data.exp && data.exp < Math.floor(Date.now() / 1000)) {
                 throw new Error("QR Signature Expired. Please ask the faculty to refresh the code.");
             }
@@ -372,84 +423,100 @@ export default function AttendancePage() {
                 if (!recovered || recovered.id !== data.s_id) {
                     throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
                 }
-                console.log("Matrix Recovery: Handshake Resynchronized.");
+                console.info("Matrix Recovery: Handshake Resynchronized.");
             }
 
             // 🚀 UPI Refinement: OPTIMISTIC TRANSITION
-            // We show SUCCESS state in the overlay, but WAIT for the API to confirm before setStatus('CONFIRMED')
             setLocalTxState('SUCCESS');
 
             const isSubmitted = await handleSubmitAttendance(data);
 
             if (isSubmitted) {
-                // Only move to the final success screen if the server actually acknowledged us
                 setTimeout(() => setStatus('CONFIRMED'), 800);
             }
 
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : String(err);
+            console.error("Scan Sequence Interrupted:", errorMessage);
             setErrorMessage(errorMessage || "Invalid Matrix QR Signature detected.");
             setLocalTxState('INVALID_QR');
             setTimeout(() => {
                 setLocalTxState('IDLE');
                 setErrorMessage(null);
-                // Standard Resume: No setStatus here, so manual resume is REQUIRED
-                if (scannerRef.current) scannerRef.current.resume();
+                if (scannerRef.current && !scannerRef.current.isScanning) {
+                    try { scannerRef.current.resume(); } catch (e) { console.warn("Scanner Resume Silenced:", e); }
+                }
             }, 3000);
         }
     }
 
     const handleSubmitAttendance = async (qrData: AttendanceQrPayload) => {
-        // 🛑 Issue #3: Provide feedback if state is missing
-        if (!tempSessionId || !fingerprintHash || !selectedLab || !activeSession) {
-            if (!isTestMode) {
-                setLocalTxState('ERROR');
-                setErrorMessage("Identity session lost. Please login again.");
-                return;
-            }
+        // 🛡️ RIGID HANDSHAKE GATE & SECURITY SANITY CHECKS
+        if (isVerifying) {
+            setErrorMessage("Security synchronization in progress. Please wait for the green shield.");
+            setLocalTxState('ERROR');
+            return false;
         }
 
-        // 🛑 Issue #8: Correct Test Mode behavior
-        if (isTestMode) {
-            console.log("Shadow Simulation: Anchoring presence locally...");
-            return;
+        if (!tempSessionId || !fingerprintHash) {
+            setErrorMessage("IDENTITY_LOSS: Your security session has expired. Please refresh the page to re-authenticate.");
+            setLocalTxState('ERROR');
+            return false;
         }
+
+        if (!selectedLab || !activeSession) {
+            setErrorMessage("CONTEXT_LOSS: Lab node or session data missing. Please select a lab again.");
+            setLocalTxState('ERROR');
+            return false;
+        }
+
+        if (isTestMode) {
+            console.info("Shadow Simulation: Anchoring presence locally...");
+            return true;
+        }
+
+        const submitController = new AbortController();
+        const submitTimeout = setTimeout(() => submitController.abort(), 15000);
 
         try {
             const response = await fetch('/api/attendance/submit', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-session-id': tempSessionId || '',
-                    'x-fingerprint': fingerprintHash || ''
+                    'x-session-id': tempSessionId,
+                    'x-fingerprint': fingerprintHash
                 },
                 body: JSON.stringify({
                     s_id: qrData.s_id,
                     t_id: qrData.t_id,
                     v_code: qrData.v_code,
                     beacon_status: 'CONNECTED'
-                })
+                }),
+                signal: submitController.signal
             });
 
+            clearTimeout(submitTimeout);
             const result = await response.json();
 
             if (!result.success) {
                 setErrorMessage(result.error || "Submission rejected by central matrix.");
                 setLocalTxState('ERROR');
-                // Auto-recovery to allow student to try again if it was a server rejection
                 setTimeout(() => {
-                    setStatus('SCANNING_QR'); // Triggers effect teardown & re-init
+                    setStatus('SCANNING_QR');
                     setLocalTxState('IDLE');
-                    // Redundant: scanner is destroyed/recreated by setStatus('SCANNING_QR')
                 }, 3000);
                 return false;
             }
-        } catch (err) {
-            console.error("Transmission Failure:", err);
-            setErrorMessage("Transmission Failure: Encryption node unreachable.");
+        } catch (err: unknown) {
+            clearTimeout(submitTimeout);
+            if (err instanceof Error && err.name === 'AbortError') {
+                setErrorMessage("TRANSMISSION_TIMEOUT: The server is taking too long to respond. Please check your network and try again.");
+            } else {
+                console.error("Transmission Failure:", err);
+                setErrorMessage("Encryption node unreachable. Ensure you have an active internet connection.");
+            }
             setLocalTxState('ERROR');
             
-            // Auto-recovery mirror
             setTimeout(() => {
                 setStatus('SCANNING_QR');
                 setLocalTxState('IDLE');
@@ -551,8 +618,8 @@ export default function AttendancePage() {
             setErrorMessage(errorMessage || "File Manifestation Failure: Invalid or unreadable QR Signature.");
         } finally {
             setIsProcessingFile(false);
-            if (scannerRef.current) {
-                try { scannerRef.current.resume(); } catch { }
+            if (scannerRef.current && !scannerRef.current.isScanning) {
+                try { scannerRef.current.resume(); } catch (e) { console.warn("File Scan Resume Silenced:", e); }
             }
         }
     };
@@ -748,6 +815,16 @@ export default function AttendancePage() {
                                                     <div className="absolute inset-0 rounded-full border-2 border-white" style={{ animation: 'pulse-ring 1s infinite' }} />
                                                 </div>
                                                 <p className="text-[10px] font-black uppercase tracking-[0.3em] italic">Handshake Active</p>
+                                            </div>
+                                        )}
+                                        
+                                        {isVerifying && (
+                                            <div className="absolute inset-0 bg-white/60 backdrop-blur-md flex flex-col items-center justify-center p-8 text-center z-[55] animate-in fade-in duration-300">
+                                                <div className="w-16 h-16 bg-[#0052a5] rounded-3xl flex items-center justify-center text-white shadow-2xl shadow-blue-900/10 mb-6 animate-bounce">
+                                                    <ShieldCheck size={32} strokeWidth={3} />
+                                                </div>
+                                                <p className="text-[11px] font-black uppercase tracking-[0.3em] mb-2 text-[#0052a5]">Securing Handshake</p>
+                                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Synchronizing Identity Node...</p>
                                             </div>
                                         )}
 

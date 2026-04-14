@@ -36,45 +36,64 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
 
   /**
    * 🛡️ Silent Re-Manifestation Protocol
-   * On refresh, re-authenticates and generates a new session node if token exists.
+   * On refresh, re-authenticates and generates a new session node if token doesn't exist.
+   * Stability: It now checks for existing active nodes matching the fingerprint to prevent churn.
    */
   useEffect(() => {
     const reinitSecurity = async () => {
       setIsVerifying(true);
-      const { data: { session } } = await supabase.auth.getSession();
-      
-      if (session?.user) {
-         // Auto-generate session node on refresh
-         try {
-            const fingerprint = generateInstitutionalFingerprint();
-            const hash = await hashFingerprint(fingerprint);
-            
-            // Generate temp_session_id via Vanguard protocol (handles unsafe origins)
-            const temp_id = generateVanguardUUID();
-            
-            // Registry Manifestation (Service Role Admin Proxy)
-            const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
-            
-            // Invalidate legacy sessions
-            await supabase.from('sessions').update({ is_active: false }).eq('student_id', session.user.id).eq('is_active', true);
-            
-            // Manifest new session
-            const { error } = await supabase.from('sessions').insert({
-              temp_session_id: temp_id,
-              student_id: session.user.id,
-              fingerprint_hash: hash,
-              expires_at,
-              is_active: true
-            });
+      try {
+        const { data: { session: authSession } } = await supabase.auth.getSession();
+        
+        if (authSession?.user) {
+          const fingerprint = generateInstitutionalFingerprint();
+          const hash = await hashFingerprint(fingerprint);
+          
+          // 📡 PERSISTENCE GAIN: Attempt to anchor to existing active node
+          const { data: existingActive, error: searchError } = await supabase
+            .from('sessions')
+            .select('*')
+            .eq('student_id', authSession.user.id)
+            .eq('fingerprint_hash', hash)
+            .eq('is_active', true)
+            .maybeSingle();
 
-            if (!error) {
-               setSession(temp_id, hash);
+          if (!searchError && existingActive) {
+            // Check chronological expiry (24h)
+            if (new Date(existingActive.expires_at) > new Date()) {
+              setSession(existingActive.temp_session_id, hash);
+              setIsVerifying(false);
+              return; // ⚓ Session stable. Re-anchoring successful.
             }
-         } catch (err) {
-            console.error("Security Re-Manifestation Failure:", err);
-         }
+          }
+
+          // Generate temp_session_id via Vanguard protocol (handles unsafe origins)
+          const temp_id = generateVanguardUUID();
+          
+          // Registry Manifestation (Service Role Admin Proxy)
+          const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+          
+          // Invalidate legacy nodes for this student globally to prevent duplication
+          await supabase.from('sessions').update({ is_active: false }).eq('student_id', authSession.user.id).eq('is_active', true);
+          
+          // Manifest new node
+          const { error: manifestError } = await supabase.from('sessions').insert({
+            temp_session_id: temp_id,
+            student_id: authSession.user.id,
+            fingerprint_hash: hash,
+            expires_at,
+            is_active: true
+          });
+
+          if (!manifestError) {
+             setSession(temp_id, hash);
+          }
+        }
+      } catch (err) {
+        console.error("Security Re-Manifestation Failure:", err);
+      } finally {
+        setIsVerifying(false);
       }
-      setIsVerifying(false);
     };
 
     reinitSecurity();

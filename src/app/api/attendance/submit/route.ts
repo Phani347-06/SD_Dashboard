@@ -82,24 +82,38 @@ export async function POST(req: Request) {
     }
 
     // 4. Laboratory QR Verification (Dual Layer)
-    const { data: qrSession, error: qrError } = await supabase
+    // 🛡️ RIGID PROTOCOL: We fetch the token by its unique ID but allow a grace window if recently rotated.
+    const { data: qrSession, error: qrError } = await (supabaseAdmin || supabase)
       .from('temp_qr_sessions')
       .select('*, class_sessions(*)')
-      .eq('temp_session_id', qr_token_id) // Strict match on the exact token window
-      .eq('class_session_id', class_session_id) // Strict match on the session node
+      .eq('temp_session_id', qr_token_id) 
+      .eq('class_session_id', class_session_id) 
       .eq('verification_code', v_code_final)
-      .eq('is_active', true)
-      .single();
+      .maybeSingle();
 
     if (qrError || !qrSession) {
       console.log("ATTENDANCE_DEBUG: Laboratory QR Signature Mismatch.", {
          input_qr_token_id: qr_token_id,
          input_class_session_id: class_session_id,
          input_v_code: v_code_final,
-         db_error: qrError?.message,
-         hint: "Verify if this (temp_session_id + class_session_id) exists and is_active=true in temp_qr_sessions table."
+         db_error: qrError?.message
       });
-      return NextResponse.json({ error: 'Laboratory QR Signature Mismatch or Session has Expired.' }, { status: 400 });
+      return NextResponse.json({ error: 'Invalid QR Signature: Matrix mismatch detected or expired.' }, { status: 403 });
+    }
+
+    // ⏳ CHRONOLOGICAL RIGIDITY CHECK
+    const expiresAt = new Date(qrSession.expires_at).getTime();
+    const now = Date.now();
+    const graceWindow = 10000; // 10s grace period for synchronized rotation
+
+    if (!qrSession.is_active && (now > (expiresAt + graceWindow))) {
+        console.log("ATTENDANCE_DEBUG: QR Token stale beyond grace window.");
+        return NextResponse.json({ error: 'QR Signature Expired: Please scan the refreshed matrix.' }, { status: 403 });
+    }
+
+    if (now > (expiresAt + graceWindow)) {
+        console.log("ATTENDANCE_DEBUG: QR Token chronologically dead.");
+        return NextResponse.json({ error: 'QR Signature Expired: Security node timeout.' }, { status: 403 });
     }
 
     // 5. Duplicate Submission Prevention
