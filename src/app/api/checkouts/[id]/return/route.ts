@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
 // PUT /checkouts/:id/return (Manually Mark Item as Returned)
-export async function PUT(request: Request, { params }: { params: { id: string } }) {
+export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { id: checkoutId } = params;
+    const { id: checkoutId } = await params;
 
     // 1. Fetch Checkout record
     const { data: checkout, error: checkoutError } = await supabase

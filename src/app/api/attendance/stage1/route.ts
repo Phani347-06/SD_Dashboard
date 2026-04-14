@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { apiInstance, SibApiV3Sdk } from '@/lib/brevo';
+import { sendEmail } from '@/lib/brevo';
 
 export async function POST(req: Request) {
   try {
@@ -75,10 +75,9 @@ export async function POST(req: Request) {
     // 4. Send Professional Receipt via Brevo
     let emailSent = false;
     try {
-      const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-      
-      sendSmtpEmail.subject = `✅ Attendance Verified: ${qrSession.class_sessions.course_code}`;
-      sendSmtpEmail.htmlContent = `
+      const { success } = await sendEmail({
+        subject: `✅ Attendance Verified: ${qrSession.class_sessions.course_code}`,
+        htmlContent: `
           <div style="font-family: sans-serif; padding: 20px; color: #333; line-height: 1.6;">
             <div style="background: #0052a5; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
                <h2 style="color: white; margin: 0;">Attendance Confirmed</h2>
@@ -94,13 +93,15 @@ export async function POST(req: Request) {
               ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}
             </p>
           </div>
-      `;
-      sendSmtpEmail.sender = { name: "SecureLab", email: "onboarding@brevo.com" };
-      sendSmtpEmail.to = [{ email: `${student.roll_no}@vnrvjiet.in` }];
+        `,
+        sender: { name: "SecureLab", email: "onboarding@brevo.com" },
+        to: [{ email: `${student.roll_no}@vnrvjiet.in` }]
+      });
 
-      await apiInstance.sendTransacEmail(sendSmtpEmail);
-      emailSent = true;
-      console.log("Brevo: Attendance receipt dispatched successfully");
+      if (success) {
+        emailSent = true;
+        console.log("Brevo: Attendance receipt dispatched successfully");
+      }
     } catch (emailErr: any) {
       console.error("Brevo System Failure:", emailErr.message);
     }

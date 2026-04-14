@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
 // PUT /alerts/:id/resolve (Faculty Action)
-export async function PUT(request: Request, { params }: { params: { id: string } }) {
+export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { id: alertId } = params;
+    const { id: alertId } = await params;
 
     const { data: alert, error: fetchError } = await supabase
       .from('inventory_alerts')

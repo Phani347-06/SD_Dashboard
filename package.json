@@ -10,6 +10,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@fingerprintjs/fingerprintjs": "^5.2.0",
     "@serwist/next": "^9.0.11",
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.99.2",
@@ -22,7 +23,6 @@
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "resend": "^6.9.4",
-    "sib-api-v3-sdk": "^8.5.0",
     "supabase": "^2.89.1",
     "tailwind-merge": "^3.5.0"
   },
