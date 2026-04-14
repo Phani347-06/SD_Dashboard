@@ -40,4 +40,14 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Agent & Planning
+.agent/
+.planning/
+.gemini/
+.antigravity/
+gsd_help.txt
+gsd_help_utf8.txt
+eslint-report.json
+eslint.json
+
 certificates

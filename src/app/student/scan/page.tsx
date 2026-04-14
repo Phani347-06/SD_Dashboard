@@ -6,31 +6,7 @@ import { Html5QrcodeScanner } from 'html5-qrcode';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { useSecurity } from '@/context/SecurityContext';
-
-// Web Bluetooth API Type Definitions
-interface BluetoothRequestDeviceOptions {
-  services?: string[];
-  filters?: BluetoothLEScanFilter[];
-}
-
-interface BluetoothLEScanFilter {
-  services?: string[];
-}
-
-interface BluetoothDevice {
-  id: string;
-  name: string;
-}
-
-interface BluetoothApi {
-  requestDevice(options: BluetoothRequestDeviceOptions): Promise<BluetoothDevice>;
-}
-
-declare global {
-  interface Navigator {
-    bluetooth?: BluetoothApi;
-  }
-}
+import '@/lib/bluetooth-types';
 
 export default function StudentScanPage() {
   const [status, setStatus] = useState<'IDLE' | 'BEACON_SEARCH' | 'SCANNING' | 'VERIFYING' | 'SUCCESS' | 'ERROR'>('IDLE');
@@ -55,6 +31,14 @@ export default function StudentScanPage() {
        setStatus('ERROR');
        setErrorMessage("No active security handshake detected. Please login again to re-manifest your identity.");
        return;
+    }
+
+    // Diagnostic: Check for Secure Context (HTTPS requirement for cameras/bluetooth)
+    if (typeof window !== 'undefined') {
+       if (!window.isSecureContext && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+          setErrorMessage("HTTPS REQUIRED: Camera and Bluetooth are disabled by the browser over insecure connections. Please access via HTTPS or Localhost.");
+          setStatus('ERROR');
+       }
     }
   }, [router, tempSessionId, fingerprintHash]);
 
@@ -83,10 +67,25 @@ export default function StudentScanPage() {
     setErrorMessage(null);
     try {
       if (!navigator.bluetooth) {
-         throw new Error("Web Bluetooth API is not available on this browser.");
+         if (typeof window !== 'undefined' && !window.isSecureContext) {
+            throw new Error("Bluetooth Restricted: Access via HTTPS or Localhost required.");
+         }
+         throw new Error("Web Bluetooth API is not supported on this browser.");
       }
+      
+      const available = await navigator.bluetooth.getAvailability();
+      if (!available) {
+         throw new Error("Bluetooth is disabled. Please turn it on and try again.");
+      }
+
+      console.log("Searching for Beacon Service:", 'b5c879b2-3be9-450f-90e7-ecad1d7d242c');
+      
       const device = await navigator.bluetooth.requestDevice({
-         filters: [{ services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] }]
+         filters: [
+            { services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] },
+            { namePrefix: 'Lab Beacon' }
+         ],
+         optionalServices: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c']
       });
       if (device) {
          setBeaconFound(true);
@@ -171,7 +170,11 @@ export default function StudentScanPage() {
     }
   }
 
-  function onScanError(err: any) {}
+  function onScanError(err: any) {
+    // Suppress frequent framing errors, but log others
+    if (typeof err === 'string' && err.includes("No QR code found")) return;
+    console.debug("QR Scan Error:", err);
+  }
 
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 relative">

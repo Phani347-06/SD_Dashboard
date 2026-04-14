@@ -46,19 +46,30 @@ export default function AttendancePage() {
           
           if (labs) setFacultyLabs(labs);
 
-          // 2. Get current active session
-          const { data: activeSession } = await supabase
+          // 2. Get current ACTIVE session (Persistence Check)
+          // Look for any session marked ACTIVE for this teacher
+          const { data: activeSession, error: sessErr } = await supabase
              .from('class_sessions')
-             .select('*, labs(name)')
+             .select('*')
              .eq('teacher_id', user.id)
              .eq('status', 'ACTIVE')
-             .order('created_at', { ascending: false })
+             .order('date', { ascending: false })
              .limit(1)
              .maybeSingle();
+
+          if (sessErr) {
+             console.error("❌ Session Retrieval Failure:", sessErr);
+          }
 
           if (activeSession) {
              setSession(activeSession);
              setSelectedLabId(activeSession.lab_id);
+             
+             // Optionally fetch lab name separately to avoid complex join errors
+             const { data: labData } = await supabase.from('labs').select('name').eq('id', activeSession.lab_id).single();
+             if (labData) {
+                setSession((prev: any) => ({ ...prev, labs: labData }));
+             }
              
              // 3. Get the active token for this session
              const { data: activeToken } = await supabase
@@ -84,12 +95,18 @@ export default function AttendancePage() {
   // Timer logic
   useEffect(() => {
     let interval: any;
-    if (session && session.created_at) {
+    if (session && session.date) { // Using session.date or adding a created_at check
       interval = setInterval(() => {
-        const start = new Date(session.created_at).getTime();
+        // Fallback: If session doesn't have created_at, use date at midnight or some start time
+        const startTime = session.created_at ? new Date(session.created_at).getTime() : new Date(session.date).getTime();
         const now = new Date().getTime();
-        const diff = now - start;
+        const diff = now - startTime;
         
+        if (diff < 0) {
+           setElapsed("00h 00m 00s");
+           return;
+        }
+
         const h = Math.floor(diff / 3600000);
         const m = Math.floor((diff % 3600000) / 60000);
         const s = Math.floor((diff % 60000) / 1000);
@@ -106,12 +123,15 @@ export default function AttendancePage() {
   useEffect(() => {
     if (session) {
       const fetchLogs = async () => {
-        const { data } = await supabase
-          .from('attendance_logs')
-          .select('*, students(full_name, roll_no)')
-          .eq('class_session_id', session.id)
-          .order('scanned_at', { ascending: false });
-        if (data) setLogs(data);
+        try {
+          const res = await fetch(`/api/attendance/logs?session_id=${session.id}&limit=100`);
+          const data = await res.json();
+          if (data.success) {
+            setLogs(data.logs);
+          }
+        } catch (err) {
+          console.error("❌ Faculty Ledger API Failure:", err);
+        }
       };
 
       fetchLogs();
@@ -193,61 +213,91 @@ export default function AttendancePage() {
     }
   };
 
-  const togglePause = async () => {
-    if (!tempSession) return;
-    setLoading(true);
-    try {
-      const { data: updated, error: pError } = await supabase
-        .from('temp_qr_sessions')
-        .update({ is_paused: !tempSession.is_paused })
-        .eq('temp_session_id', tempSession.temp_session_id)
-        .select()
-        .single();
-      
-      if (pError) throw pError;
-      setTempSession(updated);
-    } catch (err: any) {
-      setError("Matrix Pause Failed: Handshake interrupted.");
-    } finally {
-      setLoading(false);
-    }
-  };
+   const togglePause = async () => {
+     let targetId = tempSession?.temp_session_id;
+     let isActive = tempSession?.is_active;
 
-  const endSession = async () => {
-    if (!session) return;
-    setLoading(true);
-    try {
-      const { error: eError } = await supabase
-        .from('class_sessions')
-        .update({ status: 'COMPLETED' })
-        .eq('id', session.id);
-      
-      if (eError) throw eError;
-
-      if (tempSession) {
-        await supabase
+     // 🛰️ Fallback Handshake: If local state is out of sync, probe the database
+     if (!targetId && session) {
+        const { data: current } = await supabase
           .from('temp_qr_sessions')
-          .update({ is_active: false })
-          .eq('temp_session_id', tempSession.temp_session_id);
-      }
+          .select('*')
+          .eq('class_session_id', session.id)
+          .order('expires_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        
+        if (current) {
+          targetId = current.temp_session_id;
+          isActive = current.is_active;
+        }
+     }
 
+     if (!targetId) {
+        setError("Handshake Interrupt: No active QR node detected to toggle.");
+        return;
+     }
+     
+     setLoading(true);
+      try {
+       // Note: Using is_active to simulate pause. 
+       // In this schema, disabling the QR (is_active = false) effectively pauses it.
+       const { data: updated, error: pError } = await supabase
+         .from('temp_qr_sessions')
+         .update({ is_active: !isActive })
+         .match({ temp_session_id: targetId })
+         .select()
+         .single();
+       
+       if (pError) throw pError;
+       
+       // Update logic state
+       setTempSession(updated);
+       console.log(`Matrix Protocol: Status ${!updated.is_active ? 'STANDBY' : 'RESUMED'}`);
+     } catch (err: any) {
+       console.error("Matrix Protocol Error:", err);
+       setError("Protocol Error: Matrix toggle failed during handshake.");
+     } finally {
+       setLoading(false);
+     }
+   };
+
+   const endSession = async () => {
+     if (!session) return;
+     setLoading(true);
+     try {
+       const { error: eError } = await supabase
+         .from('class_sessions')
+         .update({ status: 'COMPLETED' })
+         .eq('id', session.id);
+       
+       if (eError) throw eError;
+
+       if (tempSession || session) {
+         await supabase
+           .from('temp_qr_sessions')
+           .update({ is_active: false })
+           .eq('class_session_id', session.id);
+       }
+
+       // FULL UI RESET: Allows immediate start of new session
        setSession(null);
        setTempSession(null);
-       setLogs([]);
        setElapsed("00h 00m 00s");
-    } catch (err: any) {
-       setError("Shutdown Protocol Failure: Node lock detected.");
-    } finally {
-       setLoading(false);
-    }
-  };
+       setLogs([]);
+     } catch (err: any) {
+        setError("Shutdown Protocol Failure: Node lock detected.");
+     } finally {
+        setLoading(false);
+     }
+   };
 
-  const qrValue = JSON.stringify({
-     s_id: session?.id,
-     lab_id: session?.lab_id,
-     temp_session_id: tempSession?.temp_session_id,
-     verification_code: tempSession?.verification_code
-  });
+   const qrValue = JSON.stringify({
+      s_id: session?.id,       // Class Session ID
+      t_id: tempSession?.temp_session_id, // Windowed Token ID
+      v_code: tempSession?.verification_code,
+      b_lock: true             // Boolean flag for student-side beacon enforcement
+   });
 
 
   return (
@@ -317,7 +367,7 @@ export default function AttendancePage() {
             <div className="w-56 h-56 bg-white border border-slate-100 rounded-[40px] mb-10 flex items-center justify-center p-6 shadow-2xl shadow-blue-900/5 relative z-10 group-hover:scale-105 transition-transform duration-500">
                <div className="w-full h-full bg-slate-50 rounded-[30px] flex items-center justify-center flex-col p-4 relative overflow-hidden border border-slate-100">
                   {session && tempSession ? (
-                    tempSession.is_paused ? (
+                    !tempSession.is_active ? (
                        <div className="flex flex-col items-center animate-pulse">
                           <Pause size={48} className="text-amber-500 mb-3" fill="currentColor" />
                           <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest leading-none">Matrix Disconnected</p>
@@ -354,10 +404,10 @@ export default function AttendancePage() {
               <button 
                 onClick={togglePause}
                 disabled={!session || loading}
-                className={`w-full py-4 border-2 rounded-3xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50 ${tempSession?.is_paused ? 'bg-amber-500 text-white border-amber-600 shadow-xl shadow-amber-900/10' : 'bg-white hover:bg-slate-50 text-slate-400 border-slate-100'}`}
+                className={`w-full py-4 border-2 rounded-3xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50 ${!tempSession?.is_active ? 'bg-amber-500 text-white border-amber-600 shadow-xl shadow-amber-900/10' : 'bg-white hover:bg-slate-50 text-slate-400 border-slate-100'}`}
               >
-                {tempSession?.is_paused ? <Play size={16} fill="currentColor" stroke="none" /> : <Pause size={16} fill="currentColor" stroke="none" />}
-                {tempSession?.is_paused ? 'Resume Matrix' : 'Toggle Standby'}
+                {!tempSession?.is_active ? <Play size={16} fill="currentColor" stroke="none" /> : <Pause size={16} fill="currentColor" stroke="none" />}
+                {!tempSession?.is_active ? 'Resume Matrix' : 'Toggle Standby'}
               </button>
             </div>
 

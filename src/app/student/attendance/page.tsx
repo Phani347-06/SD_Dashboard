@@ -28,6 +28,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
 import { supabase } from "@/lib/supabase";
 import { useSecurity } from "@/context/SecurityContext";
+import '@/lib/bluetooth-types';
 
 // Types for the Attendance Flow
 type AttendanceStatus = 'LAB_SELECT' | 'SEARCHING_BEACON' | 'BEACON_LOCKED' | 'SCANNING_QR' | 'VERIFYING' | 'CONFIRMED' | 'ERROR';
@@ -60,11 +61,15 @@ export default function AttendancePage() {
     // UI States
     const [loading, setLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [bluetoothStatus, setBluetoothStatus] = useState<'unknown' | 'ready' | 'disabled' | 'unsupported'>('unknown');
+    const [isSecure, setIsSecure] = useState<boolean | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [isIntegrityScanning, setIsIntegrityScanning] = useState(false);
     const [scanProgress, setScanProgress] = useState(0);
     const [scanState, setScanState] = useState("");
-    const scannerRef = useRef<Html5QrcodeScanner | null>(null);
+    const [isScannerStarting, setIsScannerStarting] = useState(false);
+    const [hasCamera, setHasCamera] = useState<boolean>(true);
+    const scannerRef = useRef<Html5Qrcode | null>(null);
 
     // 1. Initial Identity & Lab Roster Fetch
     useEffect(() => {
@@ -73,41 +78,56 @@ export default function AttendancePage() {
             if (!user) { router.push('/login'); return; }
 
             // Fetch Enrolled Labs
-            const { data: enrollmentData } = await supabase
-                .from('lab_students')
-                .select('lab_id, labs(id, name, description)')
-                .eq('student_id', user.id);
-
-            if (enrollmentData) {
-                const labs = enrollmentData.map((e: any) => e.labs);
-                setEnrolledLabs(labs);
+            console.log("🛰️ Hub Sync Initiated for Student:", user.id);
+            try {
+                const enrollRes = await fetch('/api/enrollment');
+                const enrollData = await enrollRes.json();
                 
-                // If lab ID is in search params, auto-select
-                const labId = searchParams.get('lab');
-                if (labId) {
-                    const lab = labs.find((l: any) => l.id === labId);
-                    if (lab) setSelectedLab(lab);
+                if (enrollData.success) {
+                    const labs = enrollData.labs;
+                    setEnrolledLabs(labs);
+                    
+                    const labId = searchParams.get('lab');
+                    if (labId) {
+                        const lab = labs.find((l: any) => l.id === labId);
+                        if (lab) setSelectedLab(lab);
+                    }
+                } else {
+                    setErrorMessage(`Enrollment Sync Error: ${enrollData.error || "Unknown response protocol"}`);
                 }
+            } catch (err) {
+                console.error("❌ Enrollment API Failure:", err);
+                setErrorMessage("SYSTEM: Enrollment handoff failed. Check network or permissions.");
             }
 
             // Fetch Attendance Logs
-            const { data: logs } = await supabase
-                .from('attendance_logs')
-                .select(`
-                    id,
-                    scanned_at,
-                    final_status,
-                    class_sessions (
-                        course_code,
-                        date
-                    )
-                `)
-                .eq('student_id', user.id)
-                .order('scanned_at', { ascending: false })
-                .limit(10);
-
-            if (logs) setAttendanceLogs(logs);
+            try {
+                const logsRes = await fetch('/api/attendance/logs?limit=10');
+                const logsData = await logsRes.json();
+                if (logsData.success) {
+                    setAttendanceLogs(logsData.logs);
+                }
+            } catch (err) {
+                console.error("❌ Ledger API Failure:", err);
+            }
+            
             setLoading(false);
+
+            // Diagnostic: Check for Secure Context & Bluetooth Availability
+            if (typeof window !== 'undefined') {
+                setIsSecure(window.isSecureContext);
+                
+                if (navigator.bluetooth && navigator.bluetooth.getAvailability) {
+                    const available = await navigator.bluetooth.getAvailability();
+                    setBluetoothStatus(available ? 'ready' : 'disabled');
+                } else {
+                    setBluetoothStatus('unsupported');
+                }
+
+                if (!window.isSecureContext && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+                    setErrorMessage("CRITICAL: HTTPS REQUIRED. Mobile browsers block Camera & Bluetooth on non-secure connections. Access via local HTTPS tunnel or check Institutional Dev Docs.");
+                }
+            }
         };
         initHub();
     }, [router, searchParams]);
@@ -131,28 +151,53 @@ export default function AttendancePage() {
             // Step 1: HARDWARE PROXIMITY VERIFICATION
             // This strictly locks attendance to physical ESP32 proximity. Proxies blocked.
             if (!navigator.bluetooth) {
-                throw new Error("Web Bluetooth API is restricted. Cannot verify physical presence.");
+                if (!isSecure) {
+                    throw new Error("Bluetooth Restricted: This API requires a Secure Context (HTTPS). Connect via local node or secure tunnel.");
+                }
+                throw new Error("Web Bluetooth not supported on this browser.");
+            }
+
+            const isAvailable = await navigator.bluetooth.getAvailability();
+            if (!isAvailable) {
+                throw new Error("Bluetooth is disabled on this device. Please turn on Bluetooth and try again.");
             }
             
+            // Log for debugging
+            console.log("Starting BLE Scan. Target Prefix: 'Lab Beacon', Service:", 'b5c879b2-3be9-450f-90e7-ecad1d7d242c');
+            
             const device = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true,
+                filters: [
+                    { namePrefix: 'Lab Beacon' },
+                    { services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] }
+                ],
                 optionalServices: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c']
             });
 
             // Step 2: Faculty Matrix Validation (Database)
+            console.log("🔍 Checking Sessions for Lab:", selectedLab.id, "Name:", selectedLab.name);
             const { data: sessions, error } = await supabase
                 .from('class_sessions')
-                .select('id, course_code')
+                .select('id, course_code, status')
                 .eq('lab_id', selectedLab.id)
-                .eq('status', 'ACTIVE')
+                .in('status', ['ACTIVE', 'COMPLETED']) // Check for COMPLETED too just in case it was just closed
+                .order('created_at', { ascending: false })
+                .limit(1)
                 .maybeSingle();
 
             if (error || !sessions) {
-                setErrorMessage(`Hardware detected, but no digital class session active for ${selectedLab.name}.`);
+                console.warn("⚠️ No Session Found in Matrix:", error);
+                setErrorMessage(`Hardware detected, but no digital class session active for ${selectedLab.name}. Ensure Faculty has 'Started Session'.`);
                 setStatus('LAB_SELECT');
                 return;
             }
 
+            if (sessions.status === 'COMPLETED') {
+                setErrorMessage(`The session for ${selectedLab.name} has already ended.`);
+                setStatus('LAB_SELECT');
+                return;
+            }
+
+            console.log("✅ Digital Session Locked:", sessions.id);
             setActiveSession(sessions);
             setStatus('BEACON_LOCKED');
         } catch (err: any) {
@@ -162,31 +207,59 @@ export default function AttendancePage() {
         }
     };
 
-    // 3. Scanner Protocol
+    // 3. Scanner Protocol (Enhanced Matrix Upgrade)
     useEffect(() => {
-        let scanner: Html5QrcodeScanner | null = null;
+        let qrEngine: Html5Qrcode | null = null;
         
         if (status === 'SCANNING_QR') {
-            // Delay ensures DOM element is fully manifested after animation mount
-            const mountPointTimer = setTimeout(() => {
+            const mountPointTimer = setTimeout(async () => {
                 const container = document.getElementById("attendance-reader");
                 if (!container) return;
 
-                scanner = new Html5QrcodeScanner("attendance-reader", {
-                    fps: 10,
-                    qrbox: { width: 250, height: 250 },
-                    rememberLastUsedCamera: true
-                }, false);
+                try {
+                    setIsScannerStarting(true);
+                    qrEngine = new Html5Qrcode("attendance-reader");
+                    scannerRef.current = qrEngine;
 
-                scanner.render(onScanSuccess, onScanError);
-                scannerRef.current = scanner;
-            }, 100);
+                    const config = {
+                        fps: 15,
+                        qrbox: { width: 250, height: 250 },
+                        aspectRatio: 1.0
+                    };
+
+                    await qrEngine.start(
+                        { facingMode: "environment" },
+                        config,
+                        onScanSuccess,
+                        (err) => {}
+                    );
+                    
+                    setIsScannerStarting(false);
+                    console.log("Matrix Scanner: Optic sensor activated.");
+                } catch (err: any) {
+                    setIsScannerStarting(false);
+                    console.error("Optic Initialization Failure:", err);
+                        const errorMsg = String(err);
+                        
+                        if (errorMsg.includes("NotAllowedError") || errorMsg.includes("Permission denied")) {
+                            setErrorMessage("SECURE HANDSHAKE DENIED: Camera access blocked. Enable permissions or check if another app is using the sensor.");
+                        } else if (errorMsg.includes("NotFoundError")) {
+                            setErrorMessage("HARDWARE ERROR: No valid optical sensor detected. Try the 'Analyze Signature File' fallback below.");
+                            setHasCamera(false);
+                        } else if (!window.isSecureContext) {
+                            setErrorMessage("HTTPS PROTOCOL REQ: Browser has disabled hardware access on this insecure node.");
+                        } else {
+                            setErrorMessage("SCANNER_FAILURE: Interface collision or hardware lock.");
+                        }
+                    }
+            }, 300);
 
             return () => {
                 clearTimeout(mountPointTimer);
-                if (scannerRef.current) {
-                    scannerRef.current.clear().catch(e => console.error(e));
-                    scannerRef.current = null;
+                if (scannerRef.current && scannerRef.current.isScanning) {
+                    scannerRef.current.stop().then(() => {
+                        console.log("Matrix Scanner: Optic sensor deactivated.");
+                    }).catch(e => console.warn("Clean-up warning:", e));
                 }
             };
         }
@@ -210,7 +283,8 @@ export default function AttendancePage() {
         }
     }
 
-    function onScanError(err: any) {}
+    // No-op for high-frequency scan errors, only log critical ones
+    // function onScanError(err: any) {} 
 
     const handleSubmitAttendance = async (qrData: any) => {
         if (!tempSessionId || !fingerprintHash || !selectedLab || !activeSession) return;
@@ -315,10 +389,10 @@ export default function AttendancePage() {
 
     return (
         <div className="space-y-12 pb-20 animate-in fade-in duration-700">
-            <header className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+            <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-2 lg:px-0">
                 <div>
-                    <h2 className="text-4xl font-black text-slate-900 tracking-tighter mb-2 font-display">Institutional Attendance Node</h2>
-                    <p className="text-slate-400 font-medium text-sm">Managing cryptographically signed laboratory presence and academic credits.</p>
+                    <h2 className="text-3xl lg:text-4xl font-black text-slate-900 tracking-tighter mb-2 font-display">Institutional Attendance Node</h2>
+                    <p className="text-slate-400 font-medium text-xs lg:text-sm">Managing cryptographically signed laboratory presence and academic credits.</p>
                 </div>
                 <div className="flex gap-4">
                     <div className="flex items-center gap-3 bg-white px-8 py-4 rounded-full border border-slate-100 shadow-xl shadow-blue-500/5">
@@ -331,9 +405,9 @@ export default function AttendancePage() {
             </header>
 
             {/* Attendance Stepper Matrix */}
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10">
                 <div className="lg:col-span-8">
-                    <div className="bg-white rounded-[50px] border border-slate-100 p-12 shadow-sm relative overflow-hidden group min-h-[550px] flex flex-col justify-center">
+                    <div className="bg-white rounded-[40px] lg:rounded-[50px] border border-slate-100 p-6 lg:p-12 shadow-sm relative overflow-hidden group min-h-[500px] lg:min-h-[550px] flex flex-col justify-center">
                         
                         <div className="absolute top-10 right-10 text-[60px] font-black text-slate-50 opacity-40 select-none tracking-tighter pointer-events-none group-hover:text-blue-50 transition-colors uppercase">
                             {status.split('_')[0]}
@@ -345,10 +419,10 @@ export default function AttendancePage() {
                                     <div className="w-28 h-28 bg-[#0052a5]/5 text-[#0052a5] rounded-[40px] flex items-center justify-center mb-10 shadow-inner group-hover:rotate-3 transition-transform">
                                         <FlaskConical size={56} strokeWidth={2.5} />
                                     </div>
-                                    <h3 className="text-4xl font-black text-slate-900 tracking-tighter mb-4 leading-none font-display">Select Laboratory Node</h3>
-                                    <p className="text-slate-400 text-lg font-medium mb-12 max-w-sm mx-auto">Identify the laboratory cohort you are currently attending to manifest a beacon search.</p>
+                                    <h3 className="text-3xl lg:text-4xl font-black text-slate-900 tracking-tighter mb-4 leading-none font-display">Select Laboratory Node</h3>
+                                    <p className="text-slate-400 text-sm lg:text-lg font-medium mb-8 lg:mb-12 max-w-sm mx-auto">Identify the laboratory cohort you are currently attending to manifest a beacon search.</p>
                                     
-                                    <div className="w-full max-w-sm grid grid-cols-1 gap-4 mb-10">
+                                    <div className="w-full max-w-sm grid grid-cols-1 gap-3 lg:gap-4 mb-8 lg:mb-10">
                                         {enrolledLabs.length === 0 ? (
                                             <p className="p-8 bg-slate-50 rounded-3xl text-[11px] font-black text-slate-400 uppercase tracking-widest">No Enrolled Hubs Detected</p>
                                         ) : (
@@ -378,7 +452,7 @@ export default function AttendancePage() {
                                     {selectedLab && (
                                         <button 
                                             onClick={startBeaconSearch}
-                                            className="bg-[#0052a5] text-white px-12 py-5 rounded-[28px] text-[12px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-blue-500/20 hover:scale-105 active:scale-95 transition-all flex items-center gap-4"
+                                            className="bg-[#0052a5] text-white w-full sm:w-auto px-10 lg:px-12 py-4 lg:py-5 rounded-[24px] lg:rounded-[28px] text-[11px] lg:text-[12px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-blue-500/20 hover:scale-105 active:scale-95 transition-all flex items-center justify-center gap-4"
                                         >
                                             {isTestMode ? "Manifest Shadow Beacon" : "Connect to Beacon"} <ArrowRight size={20} />
                                         </button>
@@ -417,13 +491,25 @@ export default function AttendancePage() {
                                 <motion.div key="scanning" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center text-center w-full">
                                     <div className="w-full max-w-sm aspect-square bg-slate-900 rounded-[40px] overflow-hidden border-[12px] border-white shadow-2xl relative">
                                         <div id="attendance-reader" className="w-full h-full"></div>
+                                        
+                                        {isScannerStarting && (
+                                            <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center text-white z-40">
+                                                <Loader2 size={40} className="animate-spin mb-4 text-[#0052a5]" />
+                                                <p className="text-[10px] font-black uppercase tracking-widest text-white/60">Initializing Optic Node...</p>
+                                            </div>
+                                        )}
+
                                         <div className="absolute inset-0 pointer-events-none border-2 border-emerald-500/30 opacity-20" />
+                                        
                                         {errorMessage && (
-                                            <div className="absolute inset-0 bg-rose-500/90 flex flex-col items-center justify-center p-8 text-center text-white z-50">
+                                            <div className="absolute inset-0 bg-rose-500/95 flex flex-col items-center justify-center p-6 md:p-8 text-center text-white z-50 animate-in fade-in duration-300">
                                                 <TriangleAlert size={40} className="mb-4" />
-                                                <p className="text-sm font-bold uppercase tracking-widest mb-4">Institutional Rejection</p>
-                                                <p className="text-xs font-bold text-white/80 mb-8">{errorMessage}</p>
-                                                <button onClick={() => setErrorMessage(null)} className="bg-white text-rose-600 px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest transition-transform active:scale-95 shadow-xl shadow-black/10">Retry protocol</button>
+                                                <p className="text-xs md:text-sm font-black uppercase tracking-widest mb-4">Hardware Lockout</p>
+                                                <p className="text-[10px] md:text-xs font-bold text-white/80 mb-8 leading-relaxed px-4">{errorMessage}</p>
+                                                <div className="flex flex-col gap-3 w-full">
+                                                    <button onClick={() => { setErrorMessage(null); setStatus('SCANNING_QR'); }} className="bg-white text-rose-600 px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-transform active:scale-95 shadow-xl">Retry Optic Sync</button>
+                                                    <button onClick={() => setStatus('LAB_SELECT')} className="text-white/60 hover:text-white text-[9px] font-black uppercase tracking-widest transition-colors mb-2">Back to Roster</button>
+                                                </div>
                                             </div>
                                         )}
                                         {isTestMode && (
@@ -439,18 +525,18 @@ export default function AttendancePage() {
                                     </div>
                                     
                                     {/* Mobile/HTTP Fallback Signature */}
-                                    <div className="mt-8 flex flex-col items-center gap-6 w-full max-w-sm">
+                                    <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-sm">
                                         <div className="flex items-center gap-4 text-slate-300">
                                             <div className="w-2 h-2 bg-[#0052a5] rounded-full animate-pulse" />
-                                            <p className="text-[10px] font-black uppercase tracking-widest leading-none">Active Scan Node: High Entropy Digest</p>
+                                            <p className="text-[10px] font-black uppercase tracking-widest leading-none">Active Scan Node: Encrypted Digest</p>
                                         </div>
                                         
-                                        <div className="p-6 bg-slate-50 rounded-3xl border border-slate-100 w-full group/fallback">
+                                        <div className="p-5 lg:p-6 bg-slate-50 rounded-[32px] border border-slate-100 w-full group/fallback">
                                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center mb-4 leading-relaxed">
-                                                Camera Restricted? (Browser Security Limitation)<br/>
-                                                Accessing via HTTP Node.
+                                                Hardware Restricted? (HTTPS REQ)<br/>
+                                                Use Optic Proxy Fallback
                                             </p>
-                                            <label className="flex items-center justify-center gap-3 bg-white border border-slate-200 py-4 px-6 rounded-2xl cursor-pointer hover:border-[#0052a5] hover:text-[#0052a5] transition-all text-[11px] font-black uppercase tracking-widest text-slate-800 shadow-sm active:scale-95">
+                                            <label className="flex items-center justify-center gap-3 bg-white border border-slate-200 py-3.5 px-6 rounded-2xl cursor-pointer hover:border-[#0052a5] hover:text-[#0052a5] transition-all text-[11px] font-black uppercase tracking-widest text-slate-800 shadow-sm active:scale-95">
                                                 <input 
                                                     type="file" 
                                                     accept="image/*" 
@@ -458,8 +544,8 @@ export default function AttendancePage() {
                                                     className="hidden" 
                                                     onChange={handleFileScan}
                                                 />
-                                                <FlaskConical size={18} className="text-[#0052a5]" />
-                                                Analyze Signature File
+                                                <Camera size={18} className="text-[#0052a5]" />
+                                                Analyze Signature
                                             </label>
                                         </div>
                                     </div>

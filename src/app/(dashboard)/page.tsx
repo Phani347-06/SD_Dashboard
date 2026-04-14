@@ -57,8 +57,13 @@ export default function Dashboard() {
       const currentProfile = faculty || student;
       setProfile(currentProfile);
 
-      const { data: labs } = await supabase.from('labs').select('*').order('created_at', { ascending: false });
-      const { count: studentCount } = await supabase.from('students').select('*', { count: 'exact', head: true });
+      const { data: labs } = await supabase.from('labs').select('id, name, department, status, created_at').eq('created_by', user.id).order('created_at', { ascending: false });
+      
+      // Calculate students enrolled in THIS faculty's labs
+      const labIds = labs?.map(l => l.id) || [];
+      const { count: studentCount } = labIds.length > 0 
+        ? await supabase.from('lab_students').select('student_id', { count: 'exact', head: true }).in('lab_id', labIds)
+        : { count: 0 };
       
       setStats({
         totalLabs: labs?.length || 0,
@@ -112,7 +117,7 @@ export default function Dashboard() {
         <div className="absolute -left-10 top-0 w-1 h-12 bg-[#0052a5] rounded-full blur-[2px]"></div>
         <div>
           <p className="text-[10px] uppercase font-black tracking-[0.25em] text-[#0052a5] mb-2 flex items-center gap-2">
-             <div className="w-1.5 h-1.5 rounded-full bg-blue-500"></div>
+             <span className="w-1.5 h-1.5 rounded-full bg-blue-500 block"></span>
              Institutional Node Status: Active
           </p>
           <h2 className="text-4xl font-black text-slate-900 tracking-tighter tracking-[-0.04em] leading-none mb-2">Resource Command Center</h2>

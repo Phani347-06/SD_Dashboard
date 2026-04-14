@@ -15,7 +15,9 @@ import {
   Activity,
   CircleUser,
   ChartColumn,
-  FlaskConical
+  FlaskConical,
+  Menu,
+  X
 } from "lucide-react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
@@ -27,11 +29,12 @@ interface SidebarLinkProps {
   icon: any;
   label: string;
   active: boolean;
+  onClick?: () => void;
 }
 
-function SidebarLink({ href, icon: Icon, label, active }: SidebarLinkProps) {
+function SidebarLink({ href, icon: Icon, label, active, onClick }: SidebarLinkProps) {
   return (
-    <Link href={href}>
+    <Link href={href} onClick={onClick}>
       <motion.div 
         whileHover={{ x: 5 }}
         whileTap={{ scale: 0.98 }}
@@ -57,6 +60,12 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sessionError, setSessionError] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // Close sidebar on path change
+  useEffect(() => {
+    setIsSidebarOpen(false);
+  }, [pathname]);
 
   useEffect(() => {
     let channel: any;
@@ -78,32 +87,6 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
         
         setProfile(student);
         setLoading(false);
-
-        // 2. SET UP WATCHDOG - Monitor active session node
-        if (tempSessionId) {
-          channel = supabase
-            .channel(`student_security_${user.id}`)
-            .on(
-              'postgres_changes',
-              {
-                event: 'UPDATE',
-                schema: 'public',
-                table: 'sessions',
-                filter: `student_id=eq.${user.id}`
-              },
-              (payload) => {
-                // If another session became active or this one was terminated
-                if (payload.new.temp_session_id !== tempSessionId && payload.new.is_active === true) {
-                  setSessionError(true);
-                }
-                if (payload.new.temp_session_id === tempSessionId && payload.new.is_active === false) {
-                  setSessionError(true);
-                }
-              }
-            )
-            .subscribe();
-        }
-
       } catch (err) {
         console.error("Identity Hub Failure:", err);
         router.push("/login");
@@ -112,8 +95,55 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
 
     initSession();
 
+    // 2. SET UP WATCHDOG - Robust lifecycle management
+    const setupWatchdog = async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || !tempSessionId) return;
+
+      // Clean up any existing channel with same name globally if possible 
+      // or at least local reference
+      const channelName = `student_security_${user.id}`;
+      
+      const setup = async () => {
+        // Unsubscribe from any existing channel with this name
+        await supabase.removeChannel(supabase.channel(channelName));
+
+        channel = supabase
+          .channel(channelName)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'sessions',
+              filter: `student_id=eq.${user.id}`
+            },
+            (payload: any) => {
+              if (payload.new.temp_session_id !== tempSessionId && payload.new.is_active === true) {
+                setSessionError(true);
+              }
+              if (payload.new.temp_session_id === tempSessionId && payload.new.is_active === false) {
+                setSessionError(true);
+              }
+            }
+          );
+        
+        channel.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') {
+            console.log(`🛡️ Security Watchdog Online: node_${tempSessionId.substring(0,8)}`);
+          }
+        });
+      };
+
+      setup();
+    };
+
+    setupWatchdog();
+
     return () => {
-      if (channel) supabase.removeChannel(channel);
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
     };
   }, [router, tempSessionId]);
 
@@ -128,6 +158,19 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex">
+      {/* Mobile Sidebar Overlay */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {sessionError && (
           <motion.div 
@@ -150,24 +193,36 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
         )}
       </AnimatePresence>
 
-      {/* 1. Sidebar - Dynamic Link Tracking */}
-      <aside className="w-80 bg-white border-r border-slate-100 p-8 flex flex-col h-screen fixed top-0 left-0 z-40">
-        <div className="flex items-center gap-4 mb-16 pl-4">
-          <div className="w-10 h-10 bg-[#0052a5] rounded-2xl flex items-center justify-center text-white shadow-lg shadow-blue-900/10">
-            <Activity size={24} strokeWidth={3} />
+      {/* 1. Sidebar - Responsive Navigation */}
+      <aside className={`
+        fixed top-0 left-0 h-screen bg-white border-r border-slate-100 p-8 flex flex-col z-50 transition-transform duration-300 ease-in-out
+        w-80 lg:translate-x-0
+        ${isSidebarOpen ? 'translate-x-0 shadow-2xl shadow-blue-900/20' : '-translate-x-full lg:translate-x-0'}
+      `}>
+        <div className="flex items-center justify-between mb-16 pl-4">
+          <div className="flex items-center gap-4">
+            <div className="w-10 h-10 bg-[#0052a5] rounded-2xl flex items-center justify-center text-white shadow-lg shadow-blue-900/10">
+              <Activity size={24} strokeWidth={3} />
+            </div>
+            <div>
+              <h1 className="text-xl font-black text-slate-900 tracking-tighter leading-none mb-1">PRISM</h1>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">Institutional Matrix</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-black text-slate-900 tracking-tighter leading-none mb-1">PRISM</h1>
-            <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest leading-none">Institutional Matrix</p>
-          </div>
+          <button 
+            onClick={() => setIsSidebarOpen(false)}
+            className="lg:hidden p-2 text-slate-400 hover:text-slate-600 transition-colors"
+          >
+            <X size={20} />
+          </button>
         </div>
 
         <nav className="flex-1">
-          <SidebarLink href="/student" icon={LayoutDashboard} label="Dashboard" active={pathname === "/student"} />
-          <SidebarLink href="/student/labs" icon={FlaskConical} label="Labs" active={pathname === "/student/labs"} />
-          <SidebarLink href="/student/attendance" icon={CalendarCheck} label="Attendance" active={pathname === "/student/attendance"} />
-          <SidebarLink href="/student/equipment" icon={Monitor} label="Equipment" active={pathname === "/student/equipment"} />
-          <SidebarLink href="/student/analytics" icon={ChartColumn} label="Analytics" active={pathname === "/student/analytics"} />
+          <SidebarLink href="/student" icon={LayoutDashboard} label="Dashboard" active={pathname === "/student"} onClick={() => setIsSidebarOpen(false)} />
+          <SidebarLink href="/student/labs" icon={FlaskConical} label="Labs" active={pathname === "/student/labs"} onClick={() => setIsSidebarOpen(false)} />
+          <SidebarLink href="/student/attendance" icon={CalendarCheck} label="Attendance" active={pathname === "/student/attendance"} onClick={() => setIsSidebarOpen(false)} />
+          <SidebarLink href="/student/equipment" icon={Monitor} label="Equipment" active={pathname === "/student/equipment"} onClick={() => setIsSidebarOpen(false)} />
+          <SidebarLink href="/student/analytics" icon={ChartColumn} label="Analytics" active={pathname === "/student/analytics"} onClick={() => setIsSidebarOpen(false)} />
         </nav>
 
         <div className="pt-8 border-t border-slate-50">
@@ -188,22 +243,30 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
       </aside>
 
       {/* 2. Main Content Board */}
-      <main className="flex-1 ml-80 min-h-screen">
+      <main className="flex-1 lg:ml-80 min-h-screen overflow-x-hidden">
         {/* Top Navbar */}
-        <header className="h-28 bg-white/60 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-12 sticky top-0 z-30">
-          <div className="max-w-md w-full relative">
-            <div className="absolute inset-y-0 left-6 flex items-center pointer-events-none text-slate-300">
-              <Search size={18} />
+        <header className="h-28 bg-white/60 backdrop-blur-xl border-b border-slate-100 flex items-center justify-between px-6 lg:px-12 sticky top-0 z-30">
+          <div className="flex items-center gap-4 flex-1">
+            <button 
+              onClick={() => setIsSidebarOpen(true)}
+              className="lg:hidden p-3 bg-white border border-slate-100 rounded-2xl shadow-sm text-slate-600 active:scale-95 transition-all"
+            >
+              <Menu size={20} />
+            </button>
+            <div className="max-w-md w-full relative hidden md:block">
+              <div className="absolute inset-y-0 left-6 flex items-center pointer-events-none text-slate-300">
+                <Search size={18} />
+              </div>
+              <input 
+                type="text" 
+                placeholder="Query the Matrix..." 
+                className="w-full bg-slate-100/50 border-none rounded-[20px] py-4 pl-16 pr-8 text-[12px] font-bold focus:ring-2 focus:ring-blue-100 transition-all placeholder:text-slate-400"
+              />
             </div>
-            <input 
-              type="text" 
-              placeholder="Query the Matrix..." 
-              className="w-full bg-slate-100/50 border-none rounded-[20px] py-4 pl-16 pr-8 text-[12px] font-bold focus:ring-2 focus:ring-blue-100 transition-all placeholder:text-slate-400"
-            />
           </div>
 
-          <div className="flex items-center gap-8">
-            <div className="flex items-center gap-3 pr-8 border-r border-slate-100">
+          <div className="flex items-center gap-4 lg:gap-8 ml-4">
+            <div className="hidden sm:flex items-center gap-3 pr-8 border-r border-slate-100">
               <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
               <span className="text-[10px] uppercase font-black tracking-widest text-slate-400">Node Secure</span>
             </div>
@@ -216,13 +279,13 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
             </Link>
 
             <Link href="/student/profile">
-              <div className="flex items-center gap-4 bg-slate-50 px-5 py-3 rounded-3xl border border-slate-100 hover:bg-white hover:shadow-xl hover:shadow-blue-500/5 transition-all cursor-pointer group/prof">
-                <div className="text-right">
-                  <p className="text-[11px] font-black text-slate-900 leading-none mb-1 group-hover/prof:text-[#0052a5] transition-colors">{profile?.full_name || "Authorized Student"}</p>
-                  <p className="text-[9px] font-bold text-[#0052a5] uppercase tracking-widest leading-none">{profile?.department || "CSE / IoT"}</p>
+              <div className="flex items-center gap-4 bg-slate-50 px-3 lg:px-5 py-3 rounded-3xl border border-slate-100 hover:bg-white hover:shadow-xl hover:shadow-blue-500/5 transition-all cursor-pointer group/prof">
+                <div className="text-right hidden sm:block">
+                  <p className="text-[11px] font-black text-slate-900 leading-none mb-1 group-hover/prof:text-[#0052a5] transition-colors">{profile?.full_name?.split(' ')[0] || "Authorized"}</p>
+                  <p className="text-[9px] font-bold text-[#0052a5] uppercase tracking-widest leading-none">{profile?.department || "CSE"}</p>
                 </div>
                 <div className="w-10 h-10 rounded-2xl bg-[#0052a5] text-white flex items-center justify-center group-hover/prof:scale-105 transition-transform">
-                  <CircleUser size={28} strokeWidth={1.5} />
+                  <CircleUser size={24} strokeWidth={1.5} />
                 </div>
               </div>
             </Link>
@@ -230,7 +293,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
         </header>
 
         {/* Page Children with Staggered Entry */}
-        <div className="p-12 max-w-7xl mx-auto">
+        <div className="p-6 lg:p-12 max-w-7xl mx-auto">
           <motion.div
             key={pathname}
             initial={{ opacity: 0, y: 20 }}

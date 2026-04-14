@@ -4,9 +4,22 @@
 DROP TABLE IF EXISTS public.attendance_logs CASCADE;
 DROP TABLE IF EXISTS public.temp_qr_sessions CASCADE;
 DROP TABLE IF EXISTS public.class_sessions CASCADE;
+DROP TABLE IF EXISTS public.lab_students CASCADE;
+DROP TABLE IF EXISTS public.labs CASCADE;
 DROP TABLE IF EXISTS public.students CASCADE;
 
--- 1. Students Table (Handles Login & Fingerprint)
+-- 1. Labs Table (Laboratory/Classroom Nodes)
+CREATE TABLE public.labs (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    department VARCHAR(50),
+    location VARCHAR(100),
+    status VARCHAR(20) DEFAULT 'ACTIVE',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 2. Students Table (Handles Login & Fingerprint)
 CREATE TABLE public.students (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY, -- Linked to auth.users.id
     roll_no VARCHAR(20) UNIQUE NOT NULL,
@@ -21,9 +34,19 @@ CREATE TABLE public.students (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 2. Class Sessions (Overarching Session for the Lecture/Lab)
+-- 3. Lab Students (Enrollment Junction Table)
+CREATE TABLE public.lab_students (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    student_id UUID REFERENCES public.students(id) ON DELETE CASCADE,
+    lab_id UUID REFERENCES public.labs(id) ON DELETE CASCADE,
+    enrolled_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(student_id, lab_id)
+);
+
+-- 4. Class Sessions (Overarching Session for the Lecture/Lab)
 CREATE TABLE public.class_sessions (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    lab_id UUID REFERENCES public.labs(id) ON DELETE CASCADE,
     teacher_id VARCHAR(50) NOT NULL,
     course_code VARCHAR(20) NOT NULL,
     date DATE NOT NULL,
@@ -73,7 +96,11 @@ CREATE TABLE public.beacon_telemetry (
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Create index for beacon_id lookups (frequent queries)
+-- Create indexes for performance optimization
+CREATE INDEX idx_lab_students_student_id ON public.lab_students(student_id);
+CREATE INDEX idx_lab_students_lab_id ON public.lab_students(lab_id);
+CREATE INDEX idx_class_sessions_lab_id ON public.class_sessions(lab_id);
+CREATE INDEX idx_class_sessions_status ON public.class_sessions(status);
 CREATE INDEX idx_beacon_id ON public.beacon_telemetry(beacon_id);
 CREATE INDEX idx_last_heartbeat ON public.beacon_telemetry(last_heartbeat DESC);
 

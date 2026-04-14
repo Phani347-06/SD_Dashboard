@@ -42,8 +42,8 @@ export default function StudentLabsPage() {
         labs (
           id,
           name,
-          description,
-          created_at,
+          department,
+          room_no,
           faculty (
              full_name
           )
@@ -51,10 +51,17 @@ export default function StudentLabsPage() {
       `)
       .eq('student_id', user.id);
 
-    if (!error && data) {
+    if (error) {
+       console.error("Matrix Retrieval Failure:", error);
+       setLoading(false);
+       return;
+    }
+
+    if (data) {
+      // @ts-ignore
       setLabs(data.map((item: any) => ({
         ...item.labs,
-        faculty_name: item.labs.faculty?.full_name || "Institutional Staff"
+        faculty_name: item.labs?.faculty?.full_name || "Institutional Staff"
       })));
     }
     setLoading(false);
