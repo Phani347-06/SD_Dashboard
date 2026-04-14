@@ -57,7 +57,7 @@ interface AttendanceQrPayload {
 export default function AttendancePage() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { tempSessionId, fingerprintHash, isVerifying } = useSecurity();
+    const { tempSessionId, fingerprintHash, isVerifying, clearSession } = useSecurity();
 
     const [isTestMode, setIsTestMode] = useState(false);
 
@@ -544,9 +544,14 @@ export default function AttendancePage() {
             clearTimeout(submitTimeout);
             
             if (response.status === 401) {
-                setErrorMessage("Security session expired or invalid. Automatic synchronization will attempt in 3 seconds.");
+                const errorData = await response.json().catch(() => ({}));
+                console.error("🔒 SECURITY_HANDSHAKE_401:", errorData.error || "Unknown Identity Error");
+                
+                setErrorMessage(`Security session expired or mismatch: ${errorData.error || "Invalid Token"}. Re-synchronizing...`);
                 setLocalTxState('ERROR');
+                
                 setTimeout(() => {
+                    clearSession(); // Wipe bad anchor
                     window.location.reload();
                 }, 3000);
                 return false;

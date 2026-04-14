@@ -120,7 +120,7 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
           await supabase.from('sessions').delete().lt('created_at', thirtyDaysAgo.toISOString());
 
           const temp_id = generateVanguardUUID();
-          const expires_at = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+          const expires_at = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(); // Increased to 4 hours for stability
           
           const { error: manifestError } = await supabase.from('sessions').insert({
             temp_session_id: temp_id,

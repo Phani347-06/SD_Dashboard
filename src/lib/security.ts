@@ -16,19 +16,15 @@ export function getCanvasFingerprint(): string {
     const ctx = canvas.getContext('2d');
     if (!ctx) return 'unsupported_rendering_node';
     
-    // Manifest Institutional Encryption Layer (Visual)
-    ctx.textBaseline = 'top';
-    ctx.font = "14px 'Arial'";
-    ctx.textBaseline = "alphabetic";
-    ctx.fillStyle = "#f60";
-    ctx.fillRect(125,1,62,20);
-    ctx.fillStyle = "#069";
-    ctx.fillText("institutional-node-v1", 2, 15);
-    ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
-    ctx.font = "18px 'Arial'";
-    ctx.fillText("hardware-handshake-matrix-lock", 4, 45);
+    // 🛡️ Institutional Handshake: Simplified for cross-browser hash stability
+    ctx.textBaseline = 'middle';
+    ctx.font = "bold 16px Arial";
+    ctx.fillStyle = "#0052a5";
+    ctx.fillText("VANGUARD-NODE-SECURE", 10, 30);
+    ctx.strokeStyle = "rgba(0, 82, 165, 0.5)";
+    ctx.strokeRect(5, 5, 230, 50);
     
-    return canvas.toDataURL();
+    return canvas.toDataURL('image/png');
   } catch (e) {
     return 'rendering_interrupted';
   }

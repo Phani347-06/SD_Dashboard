@@ -222,7 +222,7 @@ export default function LoginPage() {
 
           // Step 5: Silent Background Security — Session Matrix Manifestation
           if (role === 'student') {
-             const expires_at = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+             const expires_at = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(); // Increased to 4 hours for stability
              
              // 5.1 🧹 INSTITUTIONAL CLEANUP: Remove legacy sessions (Direct Removal)
              // A: Global Maintenance Sweep (Purge sessions > 30 days old to manage DB size)
