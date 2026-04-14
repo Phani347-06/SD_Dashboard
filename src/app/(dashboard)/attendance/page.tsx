@@ -13,7 +13,9 @@ import {
   StopCircle,
   Loader2,
   CheckCircle2,
-  ShieldCheck
+  ShieldCheck,
+  X,
+  Maximize2
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { supabase } from "@/lib/supabase";
@@ -29,6 +31,7 @@ export default function AttendancePage() {
   // Faculty Specific States
   const [facultyLabs, setFacultyLabs] = useState<any[]>([]);
   const [selectedLabId, setSelectedLabId] = useState<string>("");
+  const [isQrZoomed, setIsQrZoomed] = useState(false);
 
   // Fetch Labs and Active Session
   useEffect(() => {
@@ -47,7 +50,6 @@ export default function AttendancePage() {
           if (labs) setFacultyLabs(labs);
 
           // 2. Get current ACTIVE session (Persistence Check)
-          // Look for any session marked ACTIVE for this teacher
           const { data: activeSession, error: sessErr } = await supabase
              .from('class_sessions')
              .select('*')
@@ -65,13 +67,11 @@ export default function AttendancePage() {
              setSession(activeSession);
              setSelectedLabId(activeSession.lab_id);
              
-             // Optionally fetch lab name separately to avoid complex join errors
              const { data: labData } = await supabase.from('labs').select('name').eq('id', activeSession.lab_id).single();
              if (labData) {
                 setSession((prev: any) => ({ ...prev, labs: labData }));
              }
              
-             // 3. Get the active token for this session
              const { data: activeToken } = await supabase
                 .from('temp_qr_sessions')
                 .select('*')
@@ -95,9 +95,8 @@ export default function AttendancePage() {
   // Timer logic
   useEffect(() => {
     let interval: any;
-    if (session && session.date) { // Using session.date or adding a created_at check
+    if (session && session.date) {
       interval = setInterval(() => {
-        // Fallback: If session doesn't have created_at, use date at midnight or some start time
         const startTime = session.created_at ? new Date(session.created_at).getTime() : new Date(session.date).getTime();
         const now = new Date().getTime();
         const diff = now - startTime;
@@ -118,6 +117,15 @@ export default function AttendancePage() {
     }
     return () => clearInterval(interval);
   }, [session]);
+
+  // Handle Keyboard Shortcuts for Matrix Zoom
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsQrZoomed(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Fetch real attendance logs
   useEffect(() => {
@@ -165,7 +173,6 @@ export default function AttendancePage() {
 
       const selectedLab = facultyLabs.find(l => l.id === selectedLabId);
 
-      // 1. Create a Master Class Session
       const { data: newSession, error: sError } = await supabase
         .from('class_sessions')
         .insert({
@@ -181,7 +188,6 @@ export default function AttendancePage() {
       if (sError) throw sError;
       setSession(newSession);
 
-      // 2. Generate initial Rolling Token
       await generateNewToken(newSession.id);
     } catch (err: any) {
       setError("Handshake Failure: " + (err.message || "Database node unreachable."));
@@ -217,7 +223,6 @@ export default function AttendancePage() {
      let targetId = tempSession?.temp_session_id;
      let isActive = tempSession?.is_active;
 
-     // 🛰️ Fallback Handshake: If local state is out of sync, probe the database
      if (!targetId && session) {
         const { data: current } = await supabase
           .from('temp_qr_sessions')
@@ -240,8 +245,6 @@ export default function AttendancePage() {
      
      setLoading(true);
       try {
-       // Note: Using is_active to simulate pause. 
-       // In this schema, disabling the QR (is_active = false) effectively pauses it.
        const { data: updated, error: pError } = await supabase
          .from('temp_qr_sessions')
          .update({ is_active: !isActive })
@@ -250,8 +253,6 @@ export default function AttendancePage() {
          .single();
        
        if (pError) throw pError;
-       
-       // Update logic state
        setTempSession(updated);
        console.log(`Matrix Protocol: Status ${!updated.is_active ? 'STANDBY' : 'RESUMED'}`);
      } catch (err: any) {
@@ -280,7 +281,6 @@ export default function AttendancePage() {
            .eq('class_session_id', session.id);
        }
 
-       // FULL UI RESET: Allows immediate start of new session
        setSession(null);
        setTempSession(null);
        setElapsed("00h 00m 00s");
@@ -292,9 +292,7 @@ export default function AttendancePage() {
      }
    };
 
-  // 🚀 MATRIX COMPRESSION: v1|[s_id]|[t_id]|[v_code]
   const qrValue = `v1|${session?.id || ''}|${tempSession?.temp_session_id || ''}|${tempSession?.verification_code || ''}`;
-
 
    return (
      <div className="flex flex-col h-full bg-[#f8fafc] text-slate-900 pb-12 w-full max-w-[1400px] mx-auto overflow-y-auto animate-in fade-in duration-700">
@@ -369,13 +367,23 @@ export default function AttendancePage() {
                            <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest leading-none">Matrix Disconnected</p>
                         </div>
                      ) : (
-                       <QRCodeSVG 
-                          value={qrValue}
-                          size={160}
-                          level="H"
-                          includeMargin={false}
-                          className="relative z-10"
-                       />
+                        <div 
+                           onClick={() => setIsQrZoomed(true)}
+                           className="cursor-zoom-in relative group/qr transition-all duration-300 hover:scale-105"
+                           title="Click to expand Matrix"
+                        >
+                           <div className="absolute inset-0 bg-blue-500/5 blur-xl group-hover/qr:bg-blue-500/10 transition-colors rounded-3xl" />
+                           <QRCodeSVG 
+                              value={qrValue}
+                              size={160}
+                              level="H"
+                              includeMargin={false}
+                              className="relative z-10"
+                           />
+                           <div className="absolute -bottom-2 -right-2 bg-white p-1.5 rounded-xl shadow-lg border border-slate-100 opacity-0 group-hover/qr:opacity-100 transition-opacity">
+                              <Maximize2 size={12} className="text-slate-400" />
+                           </div>
+                        </div>
                      )
                    ) : (
                      <>
@@ -433,7 +441,7 @@ export default function AttendancePage() {
                        <span className="text-blue-300">Enabled</span>
                     </div>
                     <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden mt-4">
-                       <div className="w-[85%] h-full bg-blue-400 shadow-[0_0_10px_rgba(96,165,250,0.5)]" />
+                       <div className="w-[85%] h-full bg-blue-400 shadow-[0_0_100px_rgba(96,165,250,0.5)]" />
                     </div>
                  </div>
               </div>
@@ -528,6 +536,50 @@ export default function AttendancePage() {
          </div>
 
        </div>
+
+       {/* Fullscreen QR Matrix Expansion Overlay */}
+       {isQrZoomed && session && tempSession?.is_active && (
+         <div 
+           className="fixed inset-0 z-[1000] flex items-center justify-center animate-in fade-in zoom-in duration-300 p-8 md:p-12 overflow-hidden"
+         >
+           {/* Backdrop */}
+           <div 
+             className="absolute inset-0 bg-slate-950/60 backdrop-blur-[40px] cursor-pointer" 
+             onClick={() => setIsQrZoomed(false)}
+           />
+           
+           {/* Expanded Container */}
+           <div className="relative z-10 w-full max-w-4xl aspect-square bg-white rounded-[60px] p-12 md:p-20 shadow-[0_0_100px_rgba(0,0,0,0.4)] border border-white/10 flex flex-col items-center justify-center animate-in slide-in-from-bottom-12 duration-500">
+             <button 
+               onClick={() => setIsQrZoomed(false)}
+               className="absolute top-8 right-8 w-16 h-16 bg-slate-50 hover:bg-slate-100 text-slate-400 hover:text-slate-900 rounded-full flex items-center justify-center transition-all active:scale-90 border border-slate-100 shadow-sm"
+             >
+               <span className="sr-only">Retract Matrix</span>
+               <X size={32} strokeWidth={2.5} />
+             </button>
+
+             <div className="mb-12 text-center px-4">
+                <h3 className="text-[12px] font-black text-blue-500 uppercase tracking-[0.4em] mb-4">Matrix Broadcast Node</h3>
+                <p className="text-3xl md:text-5xl font-black text-slate-900 tracking-tighter uppercase italic leading-tight">Secure Attendance Signature</p>
+             </div>
+             
+             <div className="w-full h-full max-w-[550px] max-h-[550px] bg-white p-8 rounded-[40px] shadow-2xl border border-slate-50 flex items-center justify-center transform hover:scale-[1.02] transition-transform duration-700">
+               <QRCodeSVG 
+                 value={qrValue}
+                 size={480} // Optimized for distance scans
+                 level="H"
+                 includeMargin={true}
+                 className="w-full h-full"
+               />
+             </div>
+
+             <p className="mt-12 text-[10px] font-black text-slate-400 uppercase tracking-[0.3em] flex items-center gap-3">
+               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-ping" />
+               Click background or press ESC to retract
+             </p>
+           </div>
+         </div>
+       )}
      </div>
    );
 }
