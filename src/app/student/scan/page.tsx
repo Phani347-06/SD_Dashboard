@@ -11,6 +11,7 @@ import '@/lib/bluetooth-types';
 export default function StudentScanPage() {
   const [status, setStatus] = useState<'IDLE' | 'BEACON_SEARCH' | 'SCANNING' | 'VERIFYING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [beaconFound, setBeaconFound] = useState(false);
+  const [isBypassed, setIsBypassed] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const router = useRouter();
   const scannerRef = useRef<Html5QrcodeScanner | null>(null);
@@ -65,6 +66,7 @@ export default function StudentScanPage() {
   const connectToBeacon = async () => {
     setStatus('BEACON_SEARCH');
     setErrorMessage(null);
+    setIsBypassed(false); // Reset bypass on fresh search
     try {
       if (!navigator.bluetooth) {
          if (typeof window !== 'undefined' && !window.isSecureContext) {
@@ -114,22 +116,24 @@ export default function StudentScanPage() {
 
       // b. Parse QR Data
       const qrData = JSON.parse(decodedText);
-      const { s_id, temp_session_id, verification_code } = qrData;
+      const { s_id, t_id, v_code } = qrData; 
 
-      if (!s_id || !verification_code) throw new Error("Invalid Laboratory QR Structure.");
+      if (!s_id || !t_id || !v_code) {
+         setErrorMessage("Detected Invalid Laboratory QR Signature.");
+         setStatus('ERROR');
+         return;
+      }
 
       // c. Trigger Attendance Matrix Pulse
       const attendanceRequest = await fetch('/api/attendance/submit', {
          method: 'POST',
-         headers: { 
-            'Content-Type': 'application/json',
-            'x-session-id': tempSessionId || '',
-            'x-fingerprint': fingerprintHash || ''
-         },
+         headers: { 'Content-Type': 'application/json' },
          body: JSON.stringify({
-            temp_session_id: temp_session_id || tempSessionId,
+            temp_session_id: tempSessionId,
             class_session_id: s_id,
-            verification_code: verification_code,
+            t_id: t_id,
+            v_code: v_code,
+            beacon_status: isBypassed ? 'BYPASSED' : 'CONNECTED',
             fingerprint_hash: fingerprintHash
          })
       });
@@ -203,9 +207,11 @@ export default function StudentScanPage() {
               <button onClick={connectToBeacon} className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl font-semibold border border-slate-700 transition flex justify-center items-center gap-2">
                  <Bluetooth size={18} /> Try Again
               </button>
-              <button onClick={() => { setBeaconFound(true); setStatus('IDLE'); }} className="mt-8 text-[11px] text-slate-500 hover:text-blue-400 uppercase tracking-widest transition-colors font-bold flex items-center gap-2">
-                  <ShieldCheck size={14} /> Bypass BLE (Test Mode)
-              </button>
+              {process.env.NODE_ENV === 'development' && (
+                  <button onClick={() => { setBeaconFound(true); setStatus('IDLE'); setIsBypassed(true); }} className="mt-8 text-[11px] text-slate-500 hover:text-blue-400 uppercase tracking-widest transition-colors font-bold flex items-center gap-2">
+                     <ShieldCheck size={14} /> Bypass BLE (Test Mode)
+                  </button>
+              )}
            </div>
         ) : status === 'ERROR' && beaconFound ? (
            <div className="flex flex-col items-center animate-pulse">
@@ -237,9 +243,11 @@ export default function StudentScanPage() {
                   {status === 'BEACON_SEARCH' ? 'Scanning Proximity...' : 'Connect to Beacon'}
               </button>
 
-              <button onClick={() => { setBeaconFound(true); setStatus('IDLE'); }} className="mt-8 text-[11px] text-slate-600 hover:text-slate-400 uppercase tracking-widest transition-colors font-bold">
-                 Bypass (Dev/Test Mode)
-              </button>
+              {process.env.NODE_ENV === 'development' && (
+                  <button onClick={() => { setBeaconFound(true); setStatus('IDLE'); setIsBypassed(true); }} className="mt-8 text-[11px] text-slate-600 hover:text-slate-400 uppercase tracking-widest transition-colors font-bold">
+                     Bypass (Dev/Test Mode)
+                  </button>
+              )}
            </div>
         ) : (
            <>

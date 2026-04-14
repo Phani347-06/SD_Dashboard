@@ -79,14 +79,43 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
         }
 
         // 1. Resolve Profile Cache
-        const { data: student } = await supabase
+        const { data: student, error: studentError } = await supabase
           .from('students')
           .select('*')
           .eq('id', user.id)
           .single();
         
-        setProfile(student);
-        setLoading(false);
+        if (student) {
+          setProfile(student);
+          setLoading(false);
+        } else {
+          // Institutional Gate: Cross-check if this node belongs to Faculty
+          const { data: faculty, error: facultyError } = await supabase
+            .from('faculty')
+            .select('id')
+            .eq('id', user.id)
+            .single();
+
+          if (facultyError && facultyError.code !== 'PGRST116') {
+             console.error("Faculty Identity Cross-Check Failure:", facultyError);
+             setSessionError(true);
+             setProfile(null);
+             setLoading(false);
+             return;
+          }
+
+          if (faculty) {
+             console.log("Faculty node detected in student portal. Redirecting to Root Dashboard.");
+             router.push('/');
+             return;
+          }
+
+          // Case: Authenticated user not found in either institutional table
+          console.warn("Unknown Identity Node: User authenticated but missing from institutional rosters.");
+          setProfile(null);
+          setLoading(false);
+          router.push("/login"); // Safe fallback to re-authenticate or logout
+        }
       } catch (err) {
         console.error("Identity Hub Failure:", err);
         router.push("/login");

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { 
   Users, 
   Box, 
@@ -93,7 +93,7 @@ export default function DashboardLayout({
   // --- Institutional Utility Protocols ---
 
   // 1. Profiling Protocol - Identity Synchronization
-  const fetchProfile = async () => {
+  const fetchProfile = useCallback(async () => {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
       router.push('/login');
@@ -115,13 +115,13 @@ export default function DashboardLayout({
       setEditEmail(user.email || '');
     } else {
        const { data: st } = await supabase.from('students').select('*').eq('id', user.id).single();
-       if (st) {
+      if (st) {
           setProfile({ name: st.full_name, dept: st.department, role: 'Researcher', email: user.email || '', avatar_url: st.avatar_url });
           setEditName(st.full_name);
           setEditEmail(user.email || '');
-       }
+      }
     }
-  };
+  }, [router]);
 
   // 2. Notification Protocols - Telemetry Handshakes
   const addNotification = (n: NotificationItem) => {
@@ -129,7 +129,7 @@ export default function DashboardLayout({
      setUnreadCount(prev => prev + 1);
   };
 
-  const fetchInitialNotifications = async () => {
+  const fetchInitialNotifications = useCallback(async () => {
      let totalUnread = 0;
      const initialAlerts: NotificationItem[] = [];
 
@@ -161,7 +161,7 @@ export default function DashboardLayout({
 
      setNotifications(initialAlerts.slice(0, 10));
      setUnreadCount(totalUnread);
-  };
+  }, []);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
@@ -174,6 +174,13 @@ export default function DashboardLayout({
        setProfileFeedback(null);
     }
   }, [activeModal, profile]);
+
+  // Reactive Redirection Protocol: Decoupled from async profile handshake to avoid stale closures
+  useEffect(() => {
+    if (profile?.role === 'Researcher' && pathname === '/') {
+       router.push('/student');
+    }
+  }, [profile, pathname, router]);
 
   useEffect(() => {
     fetchProfile();
