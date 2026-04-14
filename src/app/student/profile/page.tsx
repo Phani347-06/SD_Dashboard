@@ -38,6 +38,23 @@ export default function ProfilePage() {
     const [isSecurityAuditing, setIsSecurityAuditing] = useState(false);
     const [scanProgress, setScanProgress] = useState(0);
     const [scanState, setScanState] = useState("");
+    
+    const handleSignOut = async () => {
+        try {
+            if (tempSessionId) {
+                await supabase
+                    .from('sessions')
+                    .update({ is_active: false })
+                    .eq('temp_session_id', tempSessionId);
+            }
+            await supabase.auth.signOut();
+            router.push('/login');
+        } catch (err) {
+            console.error("Logout Error:", err);
+            await supabase.auth.signOut();
+            router.push('/login');
+        }
+    };
 
     const BREACH_LOGS = [
         { id: 1, event: "Unauthorized Fingerprint Shift", device: "Android Node 10.x", timestamp: "Mar 20, 02:22 PM", action: "AUTO_ROTATE_KEYS" },
@@ -185,7 +202,7 @@ export default function ProfilePage() {
 
                     <div className="flex flex-col gap-4">
                         <button 
-                            onClick={async () => { await supabase.auth.signOut(); router.push('/login'); }}
+                            onClick={handleSignOut}
                             className="bg-slate-50 hover:bg-rose-50 hover:text-rose-500 text-slate-400 px-8 py-4 rounded-[28px] text-[11px] font-black uppercase tracking-widest transition-all flex items-center gap-4 active:scale-95"
                         >
                             <LogOut size={16} /> Sign Out Node

@@ -207,9 +207,15 @@ export default function LoginPage() {
 
           // Step 5: Silent Background Security — Session Matrix Manifestation
           if (role === 'student') {
-             const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+             const expires_at = new Date(Date.now() + 15 * 60 * 1000).toISOString();
              
              // 5.1 🧹 INSTITUTIONAL CLEANUP: Remove legacy sessions (Direct Removal)
+             // A: Global Maintenance Sweep (Purge sessions > 30 days old to manage DB size)
+             const thirtyDaysAgo = new Date();
+             thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+             await supabase.from('sessions').delete().lt('created_at', thirtyDaysAgo.toISOString());
+
+             // B: Student-Specific Purge (Single Device Enforcement)
              await supabase.from('sessions').delete().eq('student_id', profile.id);
 
              // 5.2 Manifest new temporary session node

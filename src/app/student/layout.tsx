@@ -61,6 +61,25 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
   const [loading, setLoading] = useState(true);
   const [sessionError, setSessionError] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  
+  const handleSignOut = async () => {
+    try {
+      if (tempSessionId) {
+        await supabase
+          .from('sessions')
+          .update({ is_active: false })
+          .eq('temp_session_id', tempSessionId);
+      }
+      clearSession();
+      await supabase.auth.signOut();
+      router.push("/login");
+    } catch (err) {
+      console.error("Logout Error:", err);
+      // Fallback
+      await supabase.auth.signOut();
+      router.push("/login");
+    }
+  };
 
   // Close sidebar on path change
   useEffect(() => {
@@ -229,8 +248,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
             Security Alert: You have been signed in on another device. This session is now terminal.
             <button 
               onClick={() => {
-                supabase.auth.signOut();
-                router.push("/login");
+                handleSignOut();
               }}
               className="bg-white/20 hover:bg-white/30 px-4 py-1.5 rounded-full text-[11px] font-black uppercase tracking-widest transition-all"
             >
@@ -279,8 +297,7 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
                 await supabase.from('sessions').update({ is_active: false }).eq('temp_session_id', tempSessionId);
               }
               clearSession();
-              await supabase.auth.signOut();
-              router.push("/login");
+              handleSignOut();
             }}
             className="w-full flex items-center gap-4 px-6 py-4 text-slate-400 hover:text-rose-500 transition-colors uppercase font-black text-[10px] tracking-widest"
           >

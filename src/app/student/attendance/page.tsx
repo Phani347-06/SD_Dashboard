@@ -542,6 +542,16 @@ export default function AttendancePage() {
             });
 
             clearTimeout(submitTimeout);
+            
+            if (response.status === 401) {
+                setErrorMessage("Security session expired or invalid. Automatic synchronization will attempt in 3 seconds.");
+                setLocalTxState('ERROR');
+                setTimeout(() => {
+                    window.location.reload();
+                }, 3000);
+                return false;
+            }
+
             const result = await response.json();
 
             if (!result.success) {

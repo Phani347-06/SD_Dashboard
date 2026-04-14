@@ -57,6 +57,8 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
               .select('*')
               .eq('temp_session_id', persistedId)
               .eq('student_id', authSession.user.id)
+              .eq('is_active', true)
+              .gt('expires_at', new Date().toISOString())
               .maybeSingle();
             
             if (sessionNode && sessionNode.fingerprint_hash === hash) {
@@ -73,6 +75,8 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
             .select('*')
             .eq('student_id', authSession.user.id)
             .eq('fingerprint_hash', hash)
+            .eq('is_active', true)
+            .gt('expires_at', new Date().toISOString())
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
@@ -103,8 +107,13 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
             .eq('student_id', authSession.user.id)
             .lt('expires_at', new Date().toISOString());
 
+          // C: Global Maintenance Sweep (Purge sessions > 30 days old to manage DB size)
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          await supabase.from('sessions').delete().lt('created_at', thirtyDaysAgo.toISOString());
+
           const temp_id = generateVanguardUUID();
-          const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+          const expires_at = new Date(Date.now() + 15 * 60 * 1000).toISOString();
           
           const { error: manifestError } = await supabase.from('sessions').insert({
             temp_session_id: temp_id,
