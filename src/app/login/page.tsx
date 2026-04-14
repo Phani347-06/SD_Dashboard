@@ -143,6 +143,21 @@ export default function LoginPage() {
 
           // Step 4: Institutional Matrix Synchronization (Atomic Pulse)
           const matrixTable = role === 'student' ? 'students' : 'faculty';
+          
+          // 🛡️ ROLE PROTECTION PULSE: Prevent cross-role identity bleeding
+          // If a user exists in the 'other' table, block unauthorized manifestation in the current role.
+          const otherTable = role === 'student' ? 'faculty' : 'students';
+          const { data: crossRoleProfile } = await supabase
+            .from(otherTable)
+            .select('id')
+            .eq('id', authResponse.data.user?.id)
+            .maybeSingle();
+
+          if (crossRoleProfile) {
+            console.error(`🛡️ Identity Conflict detected for ${authResponse.data.user?.id}`);
+            throw new Error(`Institutional Conflict: Your identity is registered as ${otherTable === 'students' ? 'a Student' : 'Faculty'}. Please use the correct login portal.`);
+          }
+
           let { data: profile, error: fetchError } = await supabase
             .from(matrixTable)
             .select('*')

@@ -92,10 +92,10 @@ export default function AttendancePage() {
     initCommandCenter();
   }, []);
 
-  // Timer logic
+  // 🕒 INSTITUTIONAL UPTIME TRACKING: Maintains high-precision lecture clock.
   useEffect(() => {
     let interval: any;
-    if (session && session.date) {
+    if (session && (session.created_at || session.date)) {
       interval = setInterval(() => {
         const startTime = session.created_at ? new Date(session.created_at).getTime() : new Date(session.date).getTime();
         const now = new Date().getTime();
@@ -228,28 +228,29 @@ export default function AttendancePage() {
   };
 
   // 🔄 RIGID QR ROTATION PROTOCOL
-  // Automatically rotates the QR node every 30 seconds to prevent session theft.
+  // Automatically rotates the QR node every 10 minutes to prevent session theft.
+  // We use a 12-minute TTL on the backend to provide a 2-minute "Handshake Grace" period.
   useEffect(() => {
     let rotationInterval: any;
     let timerInterval: any;
     
     if (session?.id && tempSession?.temp_session_id) {
-       // Main rotation logic
+       // Main rotation logic: 10 minutes (600,000ms)
        rotationInterval = setInterval(() => {
-          console.log("🔄 Triggering Scheduled Matrix Rotation...");
+          console.log("🔄 Triggering Scheduled Matrix Rotation (10m Cycle)...");
           generateNewToken(session.id);
           setRotationCountdown(600);
-       }, 600000); // 10m strict rotation
+       }, 600000); 
 
-       // UI Timer logic
+       // UI Timer logic: Displays the time remaining in the current 10m cycle
        timerInterval = setInterval(() => {
           setRotationCountdown(prev => (prev <= 1 ? 600 : prev - 1));
        }, 1000);
     }
 
     return () => {
-      if (rotationInterval) clearInterval(rotationInterval);
-      if (timerInterval) clearInterval(timerInterval);
+       clearInterval(rotationInterval);
+       clearInterval(timerInterval);
     };
   }, [session?.id, tempSession?.temp_session_id]);
 
