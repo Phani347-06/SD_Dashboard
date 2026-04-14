@@ -21,7 +21,8 @@ import {
     Loader2,
     Box,
     Activity,
-    Camera
+    Camera,
+    Upload
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -222,13 +223,13 @@ export default function AttendancePage() {
 
                 try {
                     setIsScannerStarting(true);
-                    qrEngine = new Html5Qrcode("attendance-reader");
+                    qrEngine = new Html5Qrcode("attendance-reader", { verbose: false });
                     scannerRef.current = qrEngine;
 
                     const config = {
-                        fps: 15,
-                        qrbox: { width: 250, height: 250 },
-                        aspectRatio: 1.0
+                        fps: 25, // Maximal frame rate for instant detection
+                        disableFlip: false,
+                        qrbox: undefined, // Scan full frame for UPI-like snappiness
                     };
 
                     await qrEngine.start(
@@ -239,7 +240,7 @@ export default function AttendancePage() {
                     );
                     
                     setIsScannerStarting(false);
-                    console.log("Matrix Scanner: Optic sensor activated.");
+                    console.log("Matrix Scanner: Zero-Latency sensor activated.");
                 } catch (err: any) {
                     setIsScannerStarting(false);
                     console.error("Optic Initialization Failure:", err);
@@ -398,8 +399,18 @@ export default function AttendancePage() {
         try {
             setIsProcessingFile(true);
             setErrorMessage(null);
+
+            // 1. CRITICAL: Gracefully shutdown the live scanner if active to free up the sensor/DOM
+            if (scannerRef.current && scannerRef.current.isScanning) {
+                try {
+                    await scannerRef.current.stop();
+                    console.log("Matrix Scanner: Optic sensor held for file manifestation.");
+                } catch (e) {
+                    console.warn("Sensor hold warning:", e);
+                }
+            }
             
-            // 1. Resize image instantly to handle high-res phone photos
+            // 1.5. Resize image instantly to handle high-res phone photos
             const resizedDataUrl = await resizeImageForScan(file);
             
             // 2. Convert DataURL to File object for Html5Qrcode
@@ -407,7 +418,7 @@ export default function AttendancePage() {
             const blob = await response.blob();
             const optimizedFile = new File([blob], "re-scan.jpg", { type: "image/jpeg" });
 
-            // 3. Initialize isolated decoder
+            // 3. Initialize isolated decoder on the cleared container
             const html5QrCode = new Html5Qrcode("attendance-reader", { verbose: false });
             
             try {
@@ -603,17 +614,17 @@ export default function AttendancePage() {
                                                 Hardware Restricted? (HTTPS REQ)<br/>
                                                 Use Optic Proxy Fallback
                                             </p>
-                                            <label className={`flex items-center justify-center gap-3 bg-white border border-slate-200 py-3.5 px-6 rounded-2xl cursor-pointer hover:border-[#0052a5] hover:text-[#0052a5] transition-all text-[11px] font-black uppercase tracking-widest text-slate-800 shadow-sm active:scale-95 ${isProcessingFile ? 'opacity-50 pointer-events-none' : ''}`}>
+                                            <label className="flex-1">
                                                 <input 
                                                     type="file" 
                                                     accept="image/*" 
-                                                    capture="environment" 
-                                                    className="hidden" 
                                                     onChange={handleFileScan}
-                                                    disabled={isProcessingFile}
+                                                    className="hidden" 
                                                 />
-                                                <Camera size={18} className="text-[#0052a5]" />
-                                                {isProcessingFile ? 'Processing...' : 'Analyze Signature'}
+                                                <div className="flex items-center justify-center gap-2 py-4 bg-white border-2 border-slate-100 hover:border-blue-500 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer">
+                                                    <Upload size={14} />
+                                                    Analyze Signature File
+                                                </div>
                                             </label>
                                         </div>
                                     </div>
@@ -621,10 +632,18 @@ export default function AttendancePage() {
                             )}
 
                             {status === 'VERIFYING' && (
-                                <motion.div key="verifying" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex flex-col items-center text-center py-6">
-                                    <Loader2 size={64} className="text-[#0052a5] animate-spin mb-10" strokeWidth={3} />
-                                    <h4 className="text-2xl font-black text-slate-900 tracking-tighter mb-4">Synchronizing Decentralized Presence</h4>
-                                    <p className="text-slate-400 text-sm font-medium uppercase tracking-widest animate-pulse">Securing Hardware Handshake...</p>
+                                <motion.div key="verifying" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center text-center py-10 px-8 bg-white/50 backdrop-blur-md rounded-[40px] border-2 border-[#0052a5]/10 shadow-2xl relative overflow-hidden">
+                                    <div className="absolute inset-0 bg-blue-500/5 animate-pulse pointer-events-none" />
+                                    <div className="w-24 h-24 bg-[#0052a5] text-white rounded-[32px] flex items-center justify-center mb-8 shadow-[0_20px_40px_rgba(0,82,165,0.3)] animate-bounce">
+                                        <ShieldCheck size={48} strokeWidth={2.5} />
+                                    </div>
+                                    <h4 className="text-2xl font-black text-[#0052a5] tracking-tighter mb-4 uppercase italic">Encryption Handshake Active</h4>
+                                    <div className="space-y-2">
+                                        <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.3em] animate-pulse">Synchronizing Student Matrix</p>
+                                        <div className="w-48 h-1.5 bg-slate-100 rounded-full overflow-hidden mx-auto">
+                                            <motion.div initial={{ x: -100 }} animate={{ x: 200 }} transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }} className="w-1/2 h-full bg-[#0052a5] shadow-[0_0_10px_rgba(0,82,165,0.5)]" />
+                                        </div>
+                                    </div>
                                 </motion.div>
                             )}
 
