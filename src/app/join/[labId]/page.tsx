@@ -13,9 +13,10 @@ import {
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
-export default function JoinLabPage({ params }: { params: { labId: string } }) {
+export default function JoinLabPage() {
   const router = useRouter();
-  const labId = params?.labId;
+  const params = useParams();
+  const labId = params?.labId as string;
   
   const [status, setStatus] = useState<'loading' | 'joining' | 'success' | 'unauthorized' | 'error'>('loading');
   const [labName, setLabName] = useState("");

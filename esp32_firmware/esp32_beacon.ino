@@ -10,8 +10,8 @@
   #define WIFI_PASSWORD "air18995"
 
   // Backend Server Configuration
-  // IMPORTANT: Replace with your laptop's local IP (e.g., http://192.168.1.5:3000)
-  // Run 'ipconfig' (Windows) or 'ifconfig' (Mac/Linux) to find it.
+  // ⚠️ DEVELOPMENT: "http://192.168.1.15:3000/api/esp32/status"
+  // 🚀 PRODUCTION:  "https://YOUR-APP-NAME.vercel.app/api/esp32/status"
   #define SERVER_URL "http://192.168.1.15:3000/api/esp32/status"
   #define HEARTBEAT_INTERVAL 30000  // Send status every 30 seconds
 

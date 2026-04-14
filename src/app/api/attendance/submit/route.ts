@@ -105,7 +105,7 @@ export async function POST(req: Request) {
       const student = session.students;
       
       await resend.emails.send({
-        from: 'Lab Intel <onboarding@resend.dev>', // ⚠️ ACTION: Change to [name]@[your-domain] once verified
+        from: 'Lab Intel <no-reply@coolie.me>',
         to: [`${student.roll_no}@vnrvjiet.in`],
         subject: `✅ Attendance Verified: ${qrSession.class_sessions.course_code}`,
         html: `

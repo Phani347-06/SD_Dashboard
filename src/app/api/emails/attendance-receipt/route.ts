@@ -10,7 +10,7 @@ export async function POST(req: Request) {
     }
 
     const { data, error } = await resend.emails.send({
-      from: 'Lab Intel <onboarding@resend.dev>', // Replace with your domain when ready
+      from: 'Lab Intel <no-reply@coolie.me>',
       to: [email],
       subject: `Attendance Recorded: ${sessionName}`,
       html: `

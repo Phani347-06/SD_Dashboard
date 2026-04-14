@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { sendEmail } from '@/lib/brevo';
+import { resend } from '@/lib/resend';
 
 export async function POST(req: Request) {
   try {
@@ -72,12 +72,14 @@ export async function POST(req: Request) {
 
     if (logError) throw logError;
 
-    // 4. Send Professional Receipt via Brevo
+    // 4. Send Professional Receipt via Resend
     let emailSent = false;
     try {
-      const { success } = await sendEmail({
+      await resend.emails.send({
+        from: 'Lab Intel <no-reply@coolie.me>',
+        to: [`${student.roll_no}@vnrvjiet.in`],
         subject: `✅ Attendance Verified: ${qrSession.class_sessions.course_code}`,
-        htmlContent: `
+        html: `
           <div style="font-family: sans-serif; padding: 20px; color: #333; line-height: 1.6;">
             <div style="background: #0052a5; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
                <h2 style="color: white; margin: 0;">Attendance Confirmed</h2>
@@ -94,16 +96,11 @@ export async function POST(req: Request) {
             </p>
           </div>
         `,
-        sender: { name: "SecureLab", email: "onboarding@brevo.com" },
-        to: [{ email: `${student.roll_no}@vnrvjiet.in` }]
       });
-
-      if (success) {
-        emailSent = true;
-        console.log("Brevo: Attendance receipt dispatched successfully");
-      }
+      emailSent = true;
+      console.log("Resend: Attendance receipt dispatched successfully");
     } catch (emailErr: any) {
-      console.error("Brevo System Failure:", emailErr.message);
+      console.error("Resend System Failure:", emailErr.message);
     }
 
     return NextResponse.json({ 
