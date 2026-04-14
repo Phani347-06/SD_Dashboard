@@ -101,15 +101,18 @@ export default function StudentScanPage() {
         isStopped = true;
         clearTimeout(mountTimer);
         (async () => {
-          const engine = scannerRef.current;
-          if (engine) {
+          const engineToClean = scannerRef.current;
+          if (engineToClean) {
             try {
-              if (engine.isScanning) {
-                await engine.stop();
+              if (engineToClean.isScanning) {
+                await engineToClean.stop();
               }
-              await engine.clear();
+              await engineToClean.clear();
             } catch {}
-            scannerRef.current = null;
+            // Only clear the ref if it hasn't been reassigned by a new effector
+            if (scannerRef.current === engineToClean) {
+              scannerRef.current = null;
+            }
           }
         })();
       };
@@ -147,10 +150,17 @@ export default function StudentScanPage() {
       // Step 2: PROXIMITY VERIFICATION (GATT Handshake)
       const server = await device.gatt?.connect();
       if (!server) throw new Error("Hardware Handshake Failed: Could not connect to the LabBeacon GATT server.");
-      
-      const service = await server.getPrimaryService(BEACON_SERVICE_UUID);
-      const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
-      await characteristic.readValue(); 
+
+      try {
+        const service = await server.getPrimaryService(BEACON_SERVICE_UUID);
+        const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+        await characteristic.readValue();
+      } finally {
+        // BUG: Explicitly close GATT connection to free up hardware resources
+        if (device.gatt?.connected) {
+          device.gatt.disconnect();
+        }
+      }
 
       setBeaconFound(true);
       setStatus('SCANNING');
@@ -167,7 +177,10 @@ export default function StudentScanPage() {
 
   // 4. UPI Scan Success Handler
   async function onScanSuccess(decodedText: string) {
-    console.log("QR DETECTED:", decodedText);
+    // Prevent double-processing during existing transitions
+    if (localTxState !== 'IDLE') return;
+
+    console.log("QR DETECTED: [Handshake Signature]");
     try {
       // Haptic pulse
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -448,7 +461,7 @@ export default function StudentScanPage() {
                  )}
 
                  {/* Laser Sync + Corner Brackets */}
-                 {localTxState === 'FORCE_DISABLED' && (
+                 {false && (
                    <>
                      <div className="absolute top-[12.5%] left-[12.5%] right-[12.5%] bottom-[12.5%] border border-emerald-500/20 rounded-3xl z-20 pointer-events-none">
                        <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-emerald-500 rounded-tl-2xl shadow-[-5px_-5px_15px_-5px_#10b981]" />

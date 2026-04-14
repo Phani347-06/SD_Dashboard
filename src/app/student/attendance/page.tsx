@@ -181,9 +181,16 @@ export default function AttendancePage() {
             const server = await device.gatt?.connect();
             if (!server) throw new Error("Hardware Handshake Failed: Could not connect to the LabBeacon GATT server.");
 
-            const service = await server.getPrimaryService('b5c879b2-3be9-450f-90e7-ecad1d7d242c');
-            const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
-            await characteristic.readValue(); // Verifies physical proximity by reading a protected value
+            try {
+                const service = await server.getPrimaryService('b5c879b2-3be9-450f-90e7-ecad1d7d242c');
+                const characteristic = await service.getCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8');
+                await characteristic.readValue(); // Verifies physical proximity by reading a protected value
+            } finally {
+                // BUG: Ensure we disconnect even if handshake read fails
+                if (device.gatt?.connected) {
+                    device.gatt.disconnect();
+                }
+            }
 
             // Step 3: Faculty Matrix Validation (Database)
             console.log("🔍 Checking Sessions for Lab:", selectedLab.id, "Name:", selectedLab.name);
@@ -288,17 +295,20 @@ export default function AttendancePage() {
                 isStopped = true;
                 clearTimeout(mountPointTimer);
                 (async () => {
-                    const engine = scannerRef.current;
-                    if (engine) {
+                    const engineToClean = scannerRef.current;
+                    if (engineToClean) {
                         try {
-                            if (engine.isScanning) {
-                                await engine.stop();
+                            if (engineToClean.isScanning) {
+                                await engineToClean.stop();
                             }
-                            await engine.clear();
+                            await engineToClean.clear();
                         } catch (e) {
                             console.error("Optic Handoff Failure:", e);
                         }
-                        scannerRef.current = null;
+                        // Only clear the ref if it hasn't been reassigned by a new effector
+                        if (scannerRef.current === engineToClean) {
+                            scannerRef.current = null;
+                        }
                     }
                 })();
             };
@@ -307,7 +317,10 @@ export default function AttendancePage() {
     }, [status]);
 
     async function onScanSuccess(decodedText: string) {
-        console.log("QR DETECTED:", decodedText);
+        // Prevent double-processing during existing transitions
+        if (localTxState !== 'IDLE') return;
+
+        console.log("QR DETECTED: [Handshake Signature]");
         try {
             if (typeof navigator !== 'undefined' && navigator.vibrate) {
                 navigator.vibrate(100);
@@ -344,6 +357,7 @@ export default function AttendancePage() {
             setTimeout(() => {
                 setLocalTxState('IDLE');
                 setErrorMessage(null);
+                // Standard Resume: No setStatus here, so manual resume is REQUIRED
                 if (scannerRef.current) scannerRef.current.resume();
             }, 3000);
         }
@@ -388,9 +402,9 @@ export default function AttendancePage() {
                 setLocalTxState('ERROR');
                 // Auto-recovery to allow student to try again if it was a server rejection
                 setTimeout(() => {
-                    setStatus('SCANNING_QR');
+                    setStatus('SCANNING_QR'); // Triggers effect teardown & re-init
                     setLocalTxState('IDLE');
-                    if (scannerRef.current) scannerRef.current.resume();
+                    // Redundant: scanner is destroyed/recreated by setStatus('SCANNING_QR')
                 }, 3000);
             }
         } catch {
@@ -665,7 +679,8 @@ export default function AttendancePage() {
                                             </div>
                                         )}
 
-                                        {localTxState === 'FORCE_DISABLED' && (
+                                        {/* B-Case Tuning: Brackets suppressed for maximum hardware camera acceleration */}
+                                        {false && (
                                             <>
                                                 <div className="absolute top-[10%] left-[10%] right-[10%] bottom-[10%] border-2 border-emerald-500/40 rounded-3xl z-20 pointer-events-none">
                                                     <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-emerald-500 rounded-tl-lg" />
