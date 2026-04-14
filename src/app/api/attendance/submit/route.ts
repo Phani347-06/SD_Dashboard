@@ -15,6 +15,7 @@ const mask = (val: any, visible: number = 4) => {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    const db = supabaseAdmin || supabase;
     const temp_session_id = body.temp_session_id || req.headers.get('x-session-id'); // Student's active login token
     const fingerprint_hash = body.fingerprint_hash || req.headers.get('x-fingerprint');
     
@@ -54,17 +55,71 @@ export async function POST(req: Request) {
     }
 
     // 1. Session Integrity Node Check
-    const { data: session, error: sessionError } = await (supabaseAdmin || supabase)
-      .from('sessions')
-      .select('*, students(*)')
-      .eq('temp_session_id', temp_session_id)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    let session = null;
+    let sessionError = null;
+
+    if (temp_session_id) {
+      const exactActiveQuery = await db
+        .from('sessions')
+        .select('*, students(*)')
+        .eq('temp_session_id', temp_session_id)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      session = exactActiveQuery.data;
+      sessionError = exactActiveQuery.error;
+
+      // Recovery path: tolerate stale deactivation state for the exact same session node.
+      if (!session) {
+        const exactAnyStateQuery = await db
+          .from('sessions')
+          .select('*, students(*)')
+          .eq('temp_session_id', temp_session_id)
+          .maybeSingle();
+
+        session = exactAnyStateQuery.data;
+        sessionError = exactAnyStateQuery.error ?? sessionError;
+      }
+    }
+
+    // Recovery path: if the browser is holding a stale temp_session_id, prefer the latest
+    // non-expired node on the same fingerprint rather than failing the QR as invalid.
+    if (!session && fingerprint_hash) {
+      let latestFingerprintQuery = await db
+        .from('sessions')
+        .select('*, students(*)')
+        .eq('fingerprint_hash', fingerprint_hash)
+        .eq('is_active', true)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (latestFingerprintQuery.error?.message?.includes('created_at')) {
+        latestFingerprintQuery = await db
+          .from('sessions')
+          .select('*, students(*)')
+          .eq('fingerprint_hash', fingerprint_hash)
+          .eq('is_active', true)
+          .gt('expires_at', new Date().toISOString())
+          .order('expires_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+      }
+
+      session = latestFingerprintQuery.data;
+      sessionError = latestFingerprintQuery.error ?? sessionError;
+
+      if (session) {
+        console.log("ATTENDANCE_DEBUG: Session recovered via fingerprint fallback.", {
+          recovered_temp_session_id: mask(session.temp_session_id),
+          requested_temp_session_id: mask(temp_session_id)
+        });
+      }
+    }
 
     if (sessionError || !session) {
-      console.log("ATTENDANCE_DEBUG: Session invalid or expired for ID:", mask(temp_session_id));
+      console.log("ATTENDANCE_DEBUG: Session invalid or expired for ID:", mask(temp_session_id), "reason:", sessionError?.message);
       return NextResponse.json({ error: 'Session invalid or expired' }, { status: 401 });
     }
 
