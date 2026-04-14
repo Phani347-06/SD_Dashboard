@@ -177,35 +177,58 @@ export async function POST(req: Request) {
     try {
       const { resend } = await import('@/lib/resend');
       const student = session.students;
-      console.log("ATTENDANCE_DEBUG: Attempting to send email via Resend to", student.roll_no);
       
-      const { data, error: resendErr } = await resend.emails.send({
-        from: 'no-reply@coolie.me',
-        to: [`${student.roll_no}@vnrvjiet.in`],
-        subject: `✅ Attendance Verified: ${qrSession.class_sessions.course_code}`,
-        html: `
-          <div style="font-family: sans-serif; padding: 20px; color: #333; line-height: 1.6;">
-            <div style="background: #008a00; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
-               <h2 style="color: white; margin: 0;">Attendance Confirmed</h2>
-            </div>
-            <p>Hello <strong>${student.full_name}</strong> (${student.roll_no}),</p>
-            <p>Your institutional presence for <strong>${qrSession.class_sessions.course_code}</strong> has been verified via hardware handshake.</p>
-            <div style="margin-top: 20px; padding: 15px; background: #f4f4f4; border-radius: 8px; font-size: 12px;">
-                <p style="margin: 0;"><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>
-                <p style="margin: 0;"><strong>Session Node:</strong> ${class_session_id}</p>
-                <p style="margin: 0;"><strong>Integrity Status:</strong> SECURE_MANIFEST_V2</p>
-            </div>
-          </div>
-        `,
+      // Email Diagnostic Logging
+      const resendKeyPresent = !!process.env.RESEND_API_KEY;
+      console.log("ATTENDANCE_DEBUG: Email Dispatch Metadata", {
+         student_found: !!student,
+         roll_no: student?.roll_no,
+         full_name: student?.full_name,
+         resend_api_key_configured: resendKeyPresent,
+         environment: process.env.NODE_ENV
       });
 
-      if (resendErr) {
-        console.log("ATTENDANCE_DEBUG: Resend API Rejected the email. Reason:", JSON.stringify(resendErr));
+      if (!student || !student.roll_no) {
+         console.warn("ATTENDANCE_DEBUG: Email skipped - Student data missing roll_no.");
       } else {
-        console.log("ATTENDANCE_DEBUG: Resend Accepted - Message ID:", data?.id);
+         const studentEmail = `${student.roll_no}@vnrvjiet.in`;
+         console.log("ATTENDANCE_DEBUG: Attempting to send email via Resend to", studentEmail);
+         
+         const { data, error: resendErr } = await resend.emails.send({
+           from: 'no-reply@coolie.me',
+           to: [studentEmail],
+           subject: `✅ Attendance Verified: ${qrSession.class_sessions.course_code}`,
+           html: `
+             <div style="font-family: sans-serif; padding: 20px; color: #333; line-height: 1.6;">
+               <div style="background: #008a00; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
+                  <h2 style="color: white; margin: 0;">Attendance Confirmed</h2>
+               </div>
+               <p>Hello <strong>${student.full_name || 'Student'}</strong> (${student.roll_no}),</p>
+               <p>Your institutional presence for <strong>${qrSession.class_sessions.course_code}</strong> has been verified via hardware handshake.</p>
+               <div style="margin-top: 20px; padding: 15px; background: #f4f4f4; border-radius: 8px; font-size: 12px;">
+                   <p style="margin: 0;"><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>
+                   <p style="margin: 0;"><strong>Session Node:</strong> ${class_session_id}</p>
+                   <p style="margin: 0;"><strong>Integrity Status:</strong> SECURE_MANIFEST_V2</p>
+               </div>
+               <p style="font-size: 10px; color: #999; margin-top: 30px;">
+                 This is an automated institutional receipt. No further action is required.
+               </p>
+             </div>
+           `,
+         });
+
+         if (resendErr) {
+           console.error("ATTENDANCE_DEBUG: Resend API Rejected the email.", {
+              error: resendErr,
+              code: (resendErr as any).name || (resendErr as any).code,
+              message: (resendErr as any).message
+           });
+         } else {
+           console.log("ATTENDANCE_DEBUG: Resend Accepted - Message ID:", data?.id);
+         }
       }
     } catch (emailErr: any) {
-      console.log("ATTENDANCE_DEBUG: Resend SDK Runtime Error:", emailErr.message);
+      console.error("ATTENDANCE_DEBUG: Resend SDK Runtime Error:", emailErr.message);
     }
 
     return NextResponse.json({ success: true, message: 'Institutional Attendance Manifested' });
