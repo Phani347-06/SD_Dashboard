@@ -80,14 +80,20 @@ export default function StudentScanPage() {
          throw new Error("Bluetooth is disabled. Please turn it on and try again.");
       }
 
-      console.log("Searching for Beacon Service:", 'b5c879b2-3be9-450f-90e7-ecad1d7d242c');
+      const BEACON_SERVICE_UUID = 'b5c879b2-3be9-450f-90e7-ecad1d7d242c';
+      console.log("Searching for Beacon Service:", BEACON_SERVICE_UUID);
       
+      // Web Bluetooth filter strategy for Android Chrome:
+      // Filter 1: Match by service UUID (found in scan response packet)
+      // Filter 2: Match by name prefix (fallback if scan response is slow)
+      // Both "LabBeacon" and legacy "Lab Beacon" prefixes are covered.
       const device = await navigator.bluetooth.requestDevice({
          filters: [
-            { services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] },
+            { services: [BEACON_SERVICE_UUID] },
+            { namePrefix: 'LabBeacon' },
             { namePrefix: 'Lab Beacon' }
          ],
-         optionalServices: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c']
+         optionalServices: [BEACON_SERVICE_UUID]
       });
       if (device) {
          setBeaconFound(true);

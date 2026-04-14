@@ -22,6 +22,10 @@
   #define MEASURED_POWER -59  // Power at 1 meter (~3m range for student detection)
   #define BEACON_ID "beacon-lab-room-1-station-1"
 
+  // GATT Service UUID — MUST match the frontend filter exactly
+  // Using the same UUID as the iBeacon for simplicity
+  #define GATT_SERVICE_UUID "b5c879b2-3be9-450f-90e7-ecad1d7d242c"
+
   // Global state tracking
   unsigned long lastHeartbeat = 0;
   unsigned long bootTime = 0;
@@ -36,14 +40,14 @@
     // Initialize WiFi on Core 1 (non-blocking)
     initializeWiFi();
     
-    // Initialize BLE Device
-    BLEDevice::init("Lab Beacon Node");
+    // Initialize BLE Device with a short name to fit in scan response
+    BLEDevice::init("LabBeacon");
     
-    // Create GATT Server & Service to make it visible to Web Bluetooth requestDevice()
+    // Create GATT Server & Service
     BLEServer *pServer = BLEDevice::createServer();
-    BLEService *pService = pServer->createService(IBEACON_UUID);
+    BLEService *pService = pServer->createService(GATT_SERVICE_UUID);
     
-    // Add a dummy characteristic so the service is valid
+    // Add a readable characteristic so the service is valid
     pService->createCharacteristic(
       "beb5483e-36e1-4688-b7f5-ea07361b26a8",
       BLECharacteristic::PROPERTY_READ
@@ -51,37 +55,66 @@
     
     pService->start();
 
-    // Configure iBeacon with manufacturer data frame
-    BLEBeacon oBeacon;
-    oBeacon.setUUID(IBEACON_UUID);
-    oBeacon.setMajorID(MAJOR_ID);
-    oBeacon.setMinorID(MINOR_ID);
-    oBeacon.setMeasuredPower(MEASURED_POWER);
+    // ═══════════════════════════════════════════════════════════════
+    // CRITICAL FIX: Split advertisement into TWO packets
+    //
+    // Packet 1 (Advertisement): iBeacon manufacturer data (uses ~28 bytes)
+    // Packet 2 (Scan Response):  GATT Service UUID + Device Name
+    //
+    // Android Chrome Web Bluetooth requires the Service UUID to be
+    // present in either the advertisement or scan response packet.
+    // The iBeacon frame alone consumes almost the entire 31-byte
+    // advertisement limit, so the Service UUID MUST go in the
+    // scan response for the phone to discover the device.
+    // ═══════════════════════════════════════════════════════════════
 
-    // Get advertising object
+    // --- Packet 1: iBeacon Advertisement Data ---
+    BLEBeacon oBeacon;
+    oBeacon.setManufacturerId(0x4C00); // Apple iBeacon manufacturer ID
+    oBeacon.setProximityUUID(BLEUUID(IBEACON_UUID));
+    oBeacon.setMajor(MAJOR_ID);
+    oBeacon.setMinor(MINOR_ID);
+    oBeacon.setSignalPower(MEASURED_POWER);
+
+    BLEAdvertisementData oAdvertisementData = BLEAdvertisementData();
+    oAdvertisementData.setFlags(0x06); // General Discoverable + BR/EDR Not Supported
+    
+    // Build iBeacon manufacturer data payload
+    std::string strServiceData = "";
+    strServiceData += (char)26;   // Length of iBeacon data
+    strServiceData += (char)0xFF; // Manufacturer Specific Data type
+    strServiceData += oBeacon.getData();
+    oAdvertisementData.addData(strServiceData);
+
+    // --- Packet 2: Scan Response Data (Service UUID + Name) ---
+    BLEAdvertisementData oScanResponseData = BLEAdvertisementData();
+    oScanResponseData.setCompleteServices(BLEUUID(GATT_SERVICE_UUID));
+    oScanResponseData.setName("LabBeacon");
+
+    // --- Apply both packets to the advertising object ---
     BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->setAdvertisementData(oAdvertisementData);
+    pAdvertising->setScanResponseData(oScanResponseData);
+    pAdvertising->setScanResponse(true); // MUST be true for scan response to work
     
-    // Set advertisement data (iBeacon)
-    pAdvertising->setAdvertisementData(oBeacon.getAdvData());
-    
-    // Set scan response data (GATT Service) so requestDevice() finds it
-    BLERawData scanResponseData = BLERawData();
-    pAdvertising->addServiceUUID(IBEACON_UUID);
-    
-    pAdvertising->setScanResponse(true);  // Enable scan response for the service UUID
-    
-    // Optimize advertising interval for fast discovery (100ms)
+    // Optimize advertising interval for fast discovery (100ms = 160 * 0.625ms)
     pAdvertising->setMinInterval(160);
     pAdvertising->setMaxInterval(160);
     
     // Set TX Power for ~3 meter range
-    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_DEFAULT);
+    esp_ble_tx_power_set(ESP_BLE_PWR_TYPE_ADV, ESP_PWR_LVL_P3);
     
     // Start advertising
     BLEDevice::startAdvertising();
-    Serial.println("✓ iBeacon + GATT Service active. Discovery enabled.");
-    Serial.println("✓ Beacon UUID: " + String(IBEACON_UUID));
-    Serial.println("✓ Dashboard can now find this device via Web Bluetooth.");
+    
+    Serial.println("═══════════════════════════════════════════");
+    Serial.println("✓ BLE Advertising Active (Dual-Packet Mode)");
+    Serial.println("  Packet 1 (ADV): iBeacon frame");
+    Serial.println("  Packet 2 (RSP): GATT Service UUID + Name");
+    Serial.println("  Service UUID: " + String(GATT_SERVICE_UUID));
+    Serial.println("  Device Name:  LabBeacon");
+    Serial.println("═══════════════════════════════════════════");
+    Serial.println("→ Android Chrome can now discover via Web Bluetooth.");
   }
 
   void initializeWiFi() {
