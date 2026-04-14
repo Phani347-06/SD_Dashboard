@@ -131,7 +131,8 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
             temp_session_id: temp_id,
             student_id: authSession.user.id,
             fingerprint_hash: hash,
-            expires_at
+            expires_at,
+            is_active: true
           });
 
           if (!manifestError) {

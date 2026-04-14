@@ -237,7 +237,8 @@ export default function LoginPage() {
                 temp_session_id: temp_session_id,
                 student_id: profile.id,
                 fingerprint_hash: fingerprintHash,
-                expires_at
+                expires_at,
+                is_active: true
              });
 
              if (sessionError) {
