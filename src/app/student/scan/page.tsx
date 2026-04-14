@@ -83,29 +83,13 @@ export default function StudentScanPage() {
       const BEACON_SERVICE_UUID = 'b5c879b2-3be9-450f-90e7-ecad1d7d242c';
       console.log("Searching for Beacon Service:", BEACON_SERVICE_UUID);
       
-      // Web Bluetooth filter strategy for Android Chrome:
-      // Android Chrome does NOT reliably match service UUIDs from scan response
-      // packets when using the `services` filter. Instead, filter by device name
-      // (which IS reliably read from the scan response) and request the service
-      // UUID via `optionalServices` for post-connection GATT access.
-      let device;
-      try {
-         device = await navigator.bluetooth.requestDevice({
-            filters: [
-               { namePrefix: 'LabBeacon' },
-               { namePrefix: 'Lab Beacon' }
-            ],
-            optionalServices: [BEACON_SERVICE_UUID]
-         });
-      } catch (filterError: any) {
-         // Fallback: if name filters fail, try acceptAllDevices
-         if (filterError.message?.includes('User cancelled')) throw filterError;
-         console.warn("Name filter failed, trying acceptAllDevices fallback:", filterError);
-         device = await navigator.bluetooth.requestDevice({
-            acceptAllDevices: true,
-            optionalServices: [BEACON_SERVICE_UUID]
-         });
-      }
+      // Use acceptAllDevices to show ALL nearby BLE devices in the picker.
+      // This ensures LabBeacon is discoverable regardless of scan response parsing.
+      // The user selects "LabBeacon" from the list manually.
+      const device = await navigator.bluetooth.requestDevice({
+         acceptAllDevices: true,
+         optionalServices: [BEACON_SERVICE_UUID]
+      });
       if (device) {
          setBeaconFound(true);
          setStatus('IDLE');

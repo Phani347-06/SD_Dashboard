@@ -3,6 +3,7 @@
 #include <BLEServer.h>
 #include <BLEBeacon.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 
 // WiFi Configuration (Update these with your network details)
@@ -144,8 +145,11 @@ void sendBeaconHeartbeat() {
     return;
   }
   
+  WiFiClientSecure client;
+  client.setInsecure();  // Skip certificate verification (OK for heartbeat)
+  
   HTTPClient http;
-  http.begin(SERVER_URL);
+  http.begin(client, SERVER_URL);
   http.addHeader("Content-Type", "application/json");
   
   // Calculate uptime in seconds
