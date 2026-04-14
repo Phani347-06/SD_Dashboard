@@ -209,16 +209,15 @@ export default function LoginPage() {
           if (role === 'student') {
              const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
              
-             // 5.1 Invalidate legacy active sessions for this identity
-             await supabase.from('sessions').update({ is_active: false }).eq('student_id', profile.id).eq('is_active', true);
+             // 5.1 🧹 INSTITUTIONAL CLEANUP: Remove legacy sessions (Direct Removal)
+             await supabase.from('sessions').delete().eq('student_id', profile.id);
 
              // 5.2 Manifest new temporary session node
              const { error: sessionError } = await supabase.from('sessions').insert({
                 temp_session_id: temp_session_id,
                 student_id: profile.id,
                 fingerprint_hash: fingerprintHash,
-                expires_at,
-                is_active: true
+                expires_at
              });
 
              if (sessionError) {
@@ -238,8 +237,8 @@ export default function LoginPage() {
                    .eq('id', profile.id);
                 if (lockError) throw new Error("Hardware Anchor Synchronization Failed.");
              } else if (profile.registered_device_fingerprint !== fingerprintHash) {
-                // Device Mismatch Detected: Auto-Invalidate session node
-                await supabase.from('sessions').update({ is_active: false }).eq('temp_session_id', temp_session_id);
+                // Device Mismatch Detected: Auto-Purge invalid session node (Direct Removal)
+                await supabase.from('sessions').delete().eq('temp_session_id', temp_session_id);
                 clearSession();
                 throw new Error("Hardware Lock Error: Device mismatch. Presence from unrecognized nodes is restricted.");
              }
@@ -633,7 +632,7 @@ export default function LoginPage() {
                           <label className="block text-[12px] font-bold text-slate-700 uppercase tracking-widest pl-1">Secure Password</label>
                           {mode === 'signin' && (
                             <button type="button" onClick={() => { setMode('forgot'); setErrorMsg(""); setSuccessMsg(""); }} className="text-[11px] font-bold text-[#0052a5] hover:underline">
-                              Forgot Password?
+                               Forgot Password?
                             </button>
                           )}
                        </div>

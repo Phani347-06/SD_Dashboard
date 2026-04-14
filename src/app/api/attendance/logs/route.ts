@@ -39,7 +39,11 @@ export async function GET(req: Request) {
     `;
 
     if (isFaculty) {
-      selectString += `, students:students!attendance_logs_student_id_fkey (full_name, roll_no)`;
+      selectString += `, 
+        students:students!attendance_logs_student_id_fkey (full_name, roll_no),
+        qr_code_snapshot,
+        token_id_snapshot
+      `;
     }
 
     let query = supabase

@@ -7,7 +7,6 @@ export async function GET(request: Request) {
     const { data: session, error } = await supabase
       .from('temp_qr_sessions')
       .select('temp_session_id, class_session_id, verification_code, expires_at')
-      .eq('is_active', true)
       .order('expires_at', { ascending: false })
       .limit(1)
       .single();

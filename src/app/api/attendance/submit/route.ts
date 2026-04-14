@@ -58,7 +58,6 @@ export async function POST(req: Request) {
       .from('sessions')
       .select('*, students(*)')
       .eq('temp_session_id', temp_session_id)
-      .eq('is_active', true)
       .single();
 
     if (sessionError || !session) {
@@ -69,15 +68,15 @@ export async function POST(req: Request) {
     // 2. Device Fingerprint Binding Validation
     if (session.fingerprint_hash !== fingerprint_hash) {
       console.log("ATTENDANCE_DEBUG: Device fingerprint mismatch.");
-      // Security Breach: Invalidate session immediately
-      await supabase.from('sessions').update({ is_active: false }).eq('temp_session_id', temp_session_id);
+      // Security Breach: Purge session artifact immediately
+      await supabase.from('sessions').delete().eq('temp_session_id', temp_session_id);
       return NextResponse.json({ error: 'Device mismatch — session terminated' }, { status: 401 });
     }
 
     // 3. Expiration Pulse
     if (new Date(session.expires_at) < new Date()) {
       console.log("ATTENDANCE_DEBUG: Session expired chronologically.");
-      await supabase.from('sessions').update({ is_active: false }).eq('temp_session_id', temp_session_id);
+      await supabase.from('sessions').delete().eq('temp_session_id', temp_session_id);
       return NextResponse.json({ error: 'Session expired — please login again' }, { status: 401 });
     }
 
@@ -106,14 +105,10 @@ export async function POST(req: Request) {
     const now = Date.now();
     const graceWindow = 10000; // 10s grace period for synchronized rotation
 
-    if (!qrSession.is_active && (now > (expiresAt + graceWindow))) {
+    // Removed is_active check as per Hard Deletion Protocol
+    if (now > (expiresAt + graceWindow)) {
         console.log("ATTENDANCE_DEBUG: QR Token stale beyond grace window.");
         return NextResponse.json({ error: 'QR Signature Expired: Please scan the refreshed matrix.' }, { status: 403 });
-    }
-
-    if (now > (expiresAt + graceWindow)) {
-        console.log("ATTENDANCE_DEBUG: QR Token chronologically dead.");
-        return NextResponse.json({ error: 'QR Signature Expired: Security node timeout.' }, { status: 403 });
     }
 
     // 5. Duplicate Submission Prevention
@@ -143,6 +138,8 @@ export async function POST(req: Request) {
         class_session_id,
         temp_session_id: qrSession.temp_session_id, // Link to the specific QR window
         student_id: session.student_id,
+        qr_code_snapshot: qrSession.verification_code, // Audit Audit Persistence
+        token_id_snapshot: qrSession.temp_session_id, // Forensics Traceability
         device_fingerprint_match: true,
         stage_1_passed: true,
         final_status: 'VERIFIED',

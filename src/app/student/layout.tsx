@@ -56,7 +56,7 @@ function SidebarLink({ href, icon: Icon, label, active, onClick }: SidebarLinkPr
 export default function StudentLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
-  const { tempSessionId, fingerprintHash, clearSession } = useSecurity();
+  const { tempSessionId, fingerprintHash, clearSession, isVerifying } = useSecurity();
   const [profile, setProfile] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [sessionError, setSessionError] = useState(false);
@@ -142,17 +142,35 @@ export default function StudentLayout({ children }: { children: React.ReactNode 
           .on(
             'postgres_changes',
             {
-              event: 'UPDATE',
+              event: '*', // Monitor INSERT, UPDATE, and DELETE
               schema: 'public',
               table: 'sessions',
               filter: `student_id=eq.${user.id}`
             },
             (payload: any) => {
-              if (payload.new.temp_session_id !== tempSessionId && payload.new.is_active === true) {
-                setSessionError(true);
+              // 🛡️ Security Logic: Skip updates during initial handshake
+              if (isVerifying) return; 
+
+              // A: Handling Disruption via UPDATE
+              if (payload.eventType === 'UPDATE') {
+                const sameTabMatch = payload.new.temp_session_id === tempSessionId;
+                const sameDeviceMatch = payload.new.fingerprint_hash === fingerprintHash;
+
+                if (!sameTabMatch && !sameDeviceMatch) {
+                  console.warn("🔐 Institutional Alert: Foreign hardware node detected via Update.");
+                  setSessionError(true);
+                }
               }
-              if (payload.new.temp_session_id === tempSessionId && payload.new.is_active === false) {
-                setSessionError(true);
+
+              // B: Handling Disruption via DELETE
+              if (payload.eventType === 'DELETE') {
+                // For deletions, we check if the deleted node was our active session.
+                // Note: Payload.old contains the record before deletion (usually just ID).
+                const deletedId = payload.old.temp_session_id;
+                if (deletedId === tempSessionId) {
+                  console.warn("🔐 Institutional Alert: Current hardware session artifact purged.");
+                  setSessionError(true);
+                }
               }
             }
           );

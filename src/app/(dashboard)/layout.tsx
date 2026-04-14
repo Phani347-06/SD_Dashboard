@@ -307,7 +307,7 @@ export default function DashboardLayout({
 
   const handleLogout = async () => {
     if (tempSessionId) {
-       await supabase.from('sessions').update({ is_active: false }).eq('temp_session_id', tempSessionId);
+       await supabase.from('sessions').delete().eq('temp_session_id', tempSessionId);
     }
     clearSession();
     await supabase.auth.signOut();

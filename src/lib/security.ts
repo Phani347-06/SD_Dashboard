@@ -54,11 +54,25 @@ export function generateInstitutionalFingerprint(): any {
 }
 
 /**
+ * Deterministic helper to sort object keys recursively.
+ * Ensures consistent hashing of security signatures across browser environments.
+ */
+function sortObjectKeys(obj: any): any {
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return obj;
+  return Object.keys(obj).sort().reduce((acc: any, key) => {
+    acc[key] = sortObjectKeys(obj[key]);
+    return acc;
+  }, {});
+}
+
+/**
  * Hashes the fingerprint object into a SHA-256 institutional digest.
  * Includes a fallback for Non-Secure Contexts (HTTP over Network).
  */
 export async function hashFingerprint(fingerprint: any): Promise<string> {
-  const msg = JSON.stringify(fingerprint);
+  // 1. Stabilize the raw artifact through deterministic sorting
+  const stabilized = sortObjectKeys(fingerprint);
+  const msg = JSON.stringify(stabilized);
   
   if (typeof window !== 'undefined' && window.crypto && window.crypto.subtle) {
     try {

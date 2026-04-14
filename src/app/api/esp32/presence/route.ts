@@ -22,18 +22,20 @@ export async function POST(request: Request) {
     }
 
     // 1. Verify that the session is still active
-    const { data: sessionData, error: sessionError } = await supabase
-      .from('sessions')
+    // Note: We check 'class_sessions' for the 'ACTIVE' status (the lecture state)
+    // and rely on the existence of the student's 'sessions' record for login validity.
+    const { data: classData, error: classError } = await supabase
+      .from('class_sessions')
       .select('status')
-      .eq('session_id', session_id)
+      .eq('id', session_id)
       .single();
 
-    if (sessionError || !sessionData) {
-        return NextResponse.json({ error: 'Session not found or invalid' }, { status: 404 });
+    if (classError || !classData) {
+        return NextResponse.json({ error: 'Lecture Node not found or invalid' }, { status: 404 });
     }
 
-    if (sessionData.status !== 'ACTIVE') {
-        return NextResponse.json({ error: 'Lab session is closed' }, { status: 403 });
+    if (classData.status !== 'ACTIVE') {
+        return NextResponse.json({ error: 'Lecture state is not ACTIVE (Session potentially ended)' }, { status: 403 });
     }
 
     // 2. Update the student's attendance to 'Present' in the database

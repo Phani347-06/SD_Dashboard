@@ -77,7 +77,6 @@ export default function AttendancePage() {
                 .from('temp_qr_sessions')
                 .select('*')
                 .eq('class_session_id', activeSession.id)
-                .is('is_active', true)
                 .maybeSingle();
              
              if (activeToken) {
@@ -200,20 +199,20 @@ export default function AttendancePage() {
   const generateNewToken = async (sessionId: string) => {
     setLoading(true);
     try {
-       // 🛡️ RIGID PROTOCOL: Invalidate existing tokens first for atomicity
+       // 🧹 INSTITUTIONAL CLEANUP: Delayed Removal for 'Dual Version' Support
+       const graceWindowStart = new Date(Date.now() - 120 * 1000).toISOString();
        await supabase
           .from('temp_qr_sessions')
-          .update({ is_active: false })
+          .delete()
           .eq('class_session_id', sessionId)
-          .eq('is_active', true);
+          .lt('created_at', graceWindowStart);
 
        const { data: newToken, error: tError } = await supabase
           .from('temp_qr_sessions')
           .insert({
             class_session_id: sessionId, 
             verification_code: Math.floor(100000 + Math.random() * 900000).toString(),
-            expires_at: new Date(Date.now() + 45000).toISOString(), // Rigid 45s window
-            is_active: true
+            expires_at: new Date(Date.now() + 600000).toISOString() // Rigid 10m window
           })
           .select()
           .single();
@@ -234,17 +233,17 @@ export default function AttendancePage() {
     let rotationInterval: any;
     let timerInterval: any;
     
-    if (session?.id && tempSession?.is_active) {
+    if (session?.id && tempSession?.temp_session_id) {
        // Main rotation logic
        rotationInterval = setInterval(() => {
           console.log("🔄 Triggering Scheduled Matrix Rotation...");
           generateNewToken(session.id);
-          setRotationCountdown(30);
-       }, 30000); // 30s strict rotation
+          setRotationCountdown(600);
+       }, 600000); // 10m strict rotation
 
        // UI Timer logic
        timerInterval = setInterval(() => {
-          setRotationCountdown(prev => (prev <= 1 ? 30 : prev - 1));
+          setRotationCountdown(prev => (prev <= 1 ? 600 : prev - 1));
        }, 1000);
     }
 
@@ -252,11 +251,10 @@ export default function AttendancePage() {
       if (rotationInterval) clearInterval(rotationInterval);
       if (timerInterval) clearInterval(timerInterval);
     };
-  }, [session?.id, tempSession?.is_active]);
+  }, [session?.id, tempSession?.temp_session_id]);
 
    const togglePause = async () => {
      let targetId = tempSession?.temp_session_id;
-     let isActive = tempSession?.is_active;
 
      if (!targetId && session) {
         const { data: current } = await supabase
@@ -269,27 +267,29 @@ export default function AttendancePage() {
         
         if (current) {
           targetId = current.temp_session_id;
-          isActive = current.is_active;
         }
      }
 
-     if (!targetId) {
-        setError("Handshake Interrupt: No active QR node detected to toggle.");
-        return;
-     }
-     
      setLoading(true);
       try {
-       const { data: updated, error: pError } = await supabase
-         .from('temp_qr_sessions')
-         .update({ is_active: !isActive })
-         .match({ temp_session_id: targetId })
-         .select()
-         .single();
-       
-       if (pError) throw pError;
-       setTempSession(updated);
-       console.log(`Matrix Protocol: Status ${!updated.is_active ? 'STANDBY' : 'RESUMED'}`);
+       if (targetId) {
+          // Pausing: Physically purge the active token node
+          // Pausing: Physically purge the active token node
+          const { error: dError } = await supabase
+            .from('temp_qr_sessions')
+            .delete()
+            .eq('temp_session_id', targetId);
+          
+          if (dError) throw dError;
+          setTempSession(null);
+          console.log("Matrix Protocol: Node Purged (STANDBY)");
+       } else {
+          // Resuming: Manifest a fresh identity token
+          if (session) {
+            await generateNewToken(session.id);
+            console.log("Matrix Protocol: New Node Manifested (RESUMED)");
+          }
+       }
      } catch (err: any) {
        console.error("Matrix Protocol Error:", err);
        setError("Protocol Error: Matrix toggle failed during handshake.");
@@ -309,10 +309,10 @@ export default function AttendancePage() {
        
        if (eError) throw eError;
 
-       if (tempSession || session) {
+       if (session) {
          await supabase
            .from('temp_qr_sessions')
-           .update({ is_active: false })
+           .delete()
            .eq('class_session_id', session.id);
        }
 
@@ -401,7 +401,7 @@ export default function AttendancePage() {
                           <Loader2 size={32} className="text-[#0052a5] animate-spin mb-3" />
                           <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center px-2">Synchronizing Node...</p>
                        </div>
-                     ) : !tempSession.is_active ? (
+                     ) : !tempSession ? (
                         <div className="flex flex-col items-center animate-pulse">
                            <Pause size={48} className="text-amber-500 mb-3" fill="currentColor" />
                            <p className="text-[10px] font-black text-amber-600 uppercase tracking-widest leading-none">Matrix Disconnected</p>
@@ -448,10 +448,10 @@ export default function AttendancePage() {
                <button 
                  onClick={togglePause}
                  disabled={!session || loading}
-                 className={`w-full py-4 border-2 rounded-3xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50 ${!tempSession?.is_active ? 'bg-amber-500 text-white border-amber-600 shadow-xl shadow-amber-900/10' : 'bg-white hover:bg-slate-50 text-slate-400 border-slate-100'}`}
+                 className={`w-full py-4 border-2 rounded-3xl text-[11px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-3 active:scale-95 disabled:opacity-50 ${!tempSession ? 'bg-amber-500 text-white border-amber-600 shadow-xl shadow-amber-900/10' : 'bg-white hover:bg-slate-50 text-slate-400 border-slate-100'}`}
                >
-                 {!tempSession?.is_active ? <Play size={16} fill="currentColor" stroke="none" /> : <Pause size={16} fill="currentColor" stroke="none" />}
-                 {!tempSession?.is_active ? 'Resume Matrix' : 'Toggle Standby'}
+                 {!tempSession ? <Play size={16} fill="currentColor" stroke="none" /> : <Pause size={16} fill="currentColor" stroke="none" />}
+                 {!tempSession ? 'Resume Matrix' : 'Toggle Standby'}
                </button>
              </div>
 
@@ -578,7 +578,7 @@ export default function AttendancePage() {
        </div>
 
        {/* Fullscreen QR Matrix Expansion Overlay */}
-       {isQrZoomed && session?.id && tempSession?.temp_session_id && tempSession?.is_active && (
+       {isQrZoomed && session?.id && tempSession?.temp_session_id && (
          <div 
            className="fixed inset-0 z-[1000] flex items-center justify-center animate-in fade-in zoom-in duration-300 p-8 md:p-12 overflow-hidden"
          >

@@ -67,8 +67,12 @@ CREATE TABLE public.attendance_logs (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
     student_id UUID REFERENCES public.students(id) ON DELETE CASCADE,
     class_session_id UUID REFERENCES public.class_sessions(id) ON DELETE CASCADE,
-    temp_session_id UUID REFERENCES public.temp_qr_sessions(temp_session_id) ON DELETE CASCADE,
+    temp_session_id UUID REFERENCES public.temp_qr_sessions(temp_session_id) ON DELETE SET NULL,
     scanned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    
+    -- Audit Snapshots (Maintain credibility after technical purging)
+    qr_code_snapshot VARCHAR(6),
+    token_id_snapshot UUID,
     
     -- Workflow Booleans
     stage_1_passed BOOLEAN DEFAULT FALSE,

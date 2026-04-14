@@ -32,12 +32,12 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
   const clearSession = () => {
     setTempSessionId(null);
     setFingerprintHash(null);
+    sessionStorage.removeItem('__lab_sess_id');
   };
 
   /**
    * 🛡️ Silent Re-Manifestation Protocol
-   * On refresh, re-authenticates and generates a new session node if token doesn't exist.
-   * Stability: It now checks for existing active nodes matching the fingerprint to prevent churn.
+   * Stabilized with sessionStorage anchor and Fingerprint-Affinity rules.
    */
   useEffect(() => {
     const reinitSecurity = async () => {
@@ -49,44 +49,73 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
           const fingerprint = generateInstitutionalFingerprint();
           const hash = await hashFingerprint(fingerprint);
           
-          // 📡 PERSISTENCE GAIN: Attempt to anchor to existing active node
-          const { data: existingActive, error: searchError } = await supabase
+          // 1. Try to re-anchor using sessionStorage (survives tab refresh)
+          const persistedId = sessionStorage.getItem('__lab_sess_id');
+          if (persistedId) {
+            const { data: sessionNode } = await supabase
+              .from('sessions')
+              .select('*')
+              .eq('temp_session_id', persistedId)
+              .eq('student_id', authSession.user.id)
+              .maybeSingle();
+            
+            if (sessionNode && sessionNode.fingerprint_hash === hash) {
+              console.log("🛡️ Session Anchor Verified: Persistent node matched.");
+              setSession(persistedId, hash);
+              setIsVerifying(false);
+              return;
+            }
+          }
+
+          // 2. Try to re-anchor using device fingerprint (survives app closure/re-open)
+          const { data: deviceSession } = await supabase
             .from('sessions')
             .select('*')
             .eq('student_id', authSession.user.id)
             .eq('fingerprint_hash', hash)
-            .eq('is_active', true)
+            .order('created_at', { ascending: false })
+            .limit(1)
             .maybeSingle();
 
-          if (!searchError && existingActive) {
-            // Check chronological expiry (24h)
-            if (new Date(existingActive.expires_at) > new Date()) {
-              setSession(existingActive.temp_session_id, hash);
-              setIsVerifying(false);
-              return; // ⚓ Session stable. Re-anchoring successful.
-            }
+          if (deviceSession) {
+            console.log("🛡️ Session Anchor Recovered: Existing device node manifested.");
+            setSession(deviceSession.temp_session_id, hash);
+            sessionStorage.setItem('__lab_sess_id', deviceSession.temp_session_id);
+            setIsVerifying(false);
+            return;
           }
 
-          // Generate temp_session_id via Vanguard protocol (handles unsafe origins)
-          const temp_id = generateVanguardUUID();
+          // 3. Manifest New Node (Single Device Enforcement + Permanent Cleanup)
+          console.warn("Generating New Identity Node. Purging foreign fingerprints.");
           
-          // Registry Manifestation (Service Role Admin Proxy)
+          // 🧹 INSTITUTIONAL CLEANUP: Direct Removal of irrelevant data
+          // A: Remove sessions from DIFFERENT devices (fingerprints)
+          await supabase
+            .from('sessions')
+            .delete()
+            .eq('student_id', authSession.user.id)
+            .neq('fingerprint_hash', hash);
+
+          // B: Sweep chronological detritus (Expired sessions for this student)
+          await supabase
+            .from('sessions')
+            .delete()
+            .eq('student_id', authSession.user.id)
+            .lt('expires_at', new Date().toISOString());
+
+          const temp_id = generateVanguardUUID();
           const expires_at = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
           
-          // Invalidate legacy nodes for this student globally to prevent duplication
-          await supabase.from('sessions').update({ is_active: false }).eq('student_id', authSession.user.id).eq('is_active', true);
-          
-          // Manifest new node
           const { error: manifestError } = await supabase.from('sessions').insert({
             temp_session_id: temp_id,
             student_id: authSession.user.id,
             fingerprint_hash: hash,
-            expires_at,
-            is_active: true
+            expires_at
           });
 
           if (!manifestError) {
              setSession(temp_id, hash);
+             sessionStorage.setItem('__lab_sess_id', temp_id);
           }
         }
       } catch (err) {

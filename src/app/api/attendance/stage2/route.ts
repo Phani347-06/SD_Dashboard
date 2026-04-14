@@ -56,6 +56,8 @@ export async function POST(req: Request) {
       .update({
         stage_2_passed: true,
         device_fingerprint_match: true,
+        qr_code_snapshot: qrSession.verification_code, // Audit Persistence
+        token_id_snapshot: temp_session_id, // Forensics Traceability
         final_status: 'VERIFIED'
       })
       .eq('id', scan_record_id)

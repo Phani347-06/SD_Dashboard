@@ -6,21 +6,16 @@ export async function POST(req: Request) {
   try {
     const { sessionId, tempSessionId, deviceFingerprint, studentId, verificationCode } = await req.json();
 
-    // 1. Verify Session & OTP (Visual Code check)
+    // 1. Verify Session & OTP (Existence proves activity)
     const { data: qrSession, error: qrError } = await supabase
       .from('temp_qr_sessions')
       .select('*, class_sessions(*)')
       .eq('temp_session_id', tempSessionId)
       .eq('verification_code', verificationCode)
-      .eq('is_active', true)
       .single();
 
     if (qrError || !qrSession) {
-      return NextResponse.json({ success: false, message: 'Invalid or Expired QR Session' }, { status: 400 });
-    }
-
-    if (qrSession.is_paused) {
-      return NextResponse.json({ success: false, message: 'Institutional Lock: Attendance currently paused by faculty.' }, { status: 400 });
+      return NextResponse.json({ success: false, message: 'Invalid or Expired QR Session Signature' }, { status: 400 });
     }
 
     // 2. Verify Identity Handshake (Fingerprint + Session Token)
@@ -65,6 +60,8 @@ export async function POST(req: Request) {
         class_session_id: sessionId,
         temp_session_id: tempSessionId,
         student_id: studentId,
+        qr_code_snapshot: verificationCode,
+        token_id_snapshot: tempSessionId,
         device_fingerprint_match: true,
         stage_1_passed: true,
         final_status: 'VERIFIED'
