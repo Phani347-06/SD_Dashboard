@@ -162,8 +162,8 @@ export default function AttendancePage() {
                 .select('id, course_code, status')
                 .eq('lab_id', selectedLab.id)
                 .in('status', ['ACTIVE', 'COMPLETED'])
-                .order('status', { ascending: true })
-                .order('date', { ascending: false })
+                .order('status', { ascending: true }) // Prioritize ACTIVE over COMPLETED
+                .order('created_at', { ascending: false }) // Prioritize latest absolute creation
                 .limit(1);
 
             const sessions = sessionList && sessionList.length > 0 ? sessionList[0] : null;
@@ -391,9 +391,20 @@ export default function AttendancePage() {
 
             setLocalTxState('VERIFYING');
             
-            // 🚀 Matrix Decoder (V1 Compactor Support)
+            // 🚀 Matrix Decoder (V2/V1 Compactor Support)
             let data: AttendanceQrPayload & { exp?: number };
-            if (decodedText.startsWith('v1|')) {
+            if (decodedText.startsWith('v2|')) {
+                const parts = decodedText.split('|');
+                if (parts.length < 5) {
+                    throw new Error("MALFORMED_SIGNATURE_V2: Extended QR structure is incomplete.");
+                }
+                data = {
+                    s_id: parts[1],
+                    t_id: parts[2],
+                    v_code: parts[3],
+                    exp: parseInt(parts[4])
+                };
+            } else if (decodedText.startsWith('v1|')) {
                 const parts = decodedText.split('|');
                 if (parts.length < 4) {
                     throw new Error("MALFORMED_SIGNATURE: Compact QR structure is incomplete.");
@@ -417,13 +428,28 @@ export default function AttendancePage() {
                 throw new Error("QR Signature Expired. Please ask the faculty to refresh the code.");
             }
 
+            // 🛡️ Matrix Identity Verification (ID Resynchronization)
             if (!isTestMode && data.s_id !== activeSession?.id) {
-                console.warn("Matrix Mismatch: Attempting Background Recovery...");
-                const recovered = await syncActiveSession();
-                if (!recovered || recovered.id !== data.s_id) {
-                    throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
+                console.warn("Matrix Mismatch: Attempting Forensic Synchronization...");
+                
+                // 1. Direct Verification: Does this QR ID belong to the current lab?
+                const { data: scannedSession, error: sError } = await supabase
+                    .from('class_sessions')
+                    .select('id, course_code, lab_id, status')
+                    .eq('id', data.s_id)
+                    .single();
+
+                if (!sError && scannedSession && scannedSession.lab_id === selectedLab?.id) {
+                    console.info("✅ Resync Success: Anchoring to scanned session node.");
+                    setActiveSession(scannedSession);
+                } else {
+                    // 2. Fallback: Try general lab sync (already updated with created_at ordering)
+                    const recovered = await syncActiveSession();
+                    if (!recovered || recovered.id !== data.s_id) {
+                        throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
+                    }
+                    console.info("Matrix Recovery: Handshake Resynchronized.");
                 }
-                console.info("Matrix Recovery: Handshake Resynchronized.");
             }
 
             // 🚀 UPI Refinement: OPTIMISTIC TRANSITION

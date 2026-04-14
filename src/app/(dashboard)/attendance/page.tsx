@@ -196,23 +196,23 @@ export default function AttendancePage() {
     }
   };
 
-  const generateNewToken = async (sessionId: string) => {
+   const generateNewToken = async (sessionId: string) => {
     setLoading(true);
     try {
-       // 🧹 INSTITUTIONAL CLEANUP: Delayed Removal for 'Dual Version' Support
-       const graceWindowStart = new Date(Date.now() - 120 * 1000).toISOString();
+       // 🧹 INSTITUTIONAL CLEANUP: 12-minute TTL (10m Active + 2m Grace Overlap)
+       const legacyThreshold = new Date(Date.now() - 720 * 1000).toISOString();
        await supabase
           .from('temp_qr_sessions')
           .delete()
           .eq('class_session_id', sessionId)
-          .lt('created_at', graceWindowStart);
+          .lt('created_at', legacyThreshold);
 
        const { data: newToken, error: tError } = await supabase
           .from('temp_qr_sessions')
           .insert({
             class_session_id: sessionId, 
             verification_code: Math.floor(100000 + Math.random() * 900000).toString(),
-            expires_at: new Date(Date.now() + 600000).toISOString() // Rigid 10m window
+            expires_at: new Date(Date.now() + 720000).toISOString() // 12m total forensic life
           })
           .select()
           .single();
@@ -327,7 +327,8 @@ export default function AttendancePage() {
      }
    };
 
-  const qrValue = `v1|${session?.id || ''}|${tempSession?.temp_session_id || ''}|${tempSession?.verification_code || ''}`;
+  const qrExpiry = Math.floor((Date.now() + 600000) / 1000); // 10 minute display validity
+  const qrValue = `v2|${session?.id || ''}|${tempSession?.temp_session_id || ''}|${tempSession?.verification_code || ''}|${qrExpiry}`;
 
    return (
      <div className="flex flex-col h-full bg-[#f8fafc] text-slate-900 pb-12 w-full max-w-[1400px] mx-auto overflow-y-auto animate-in fade-in duration-700">
