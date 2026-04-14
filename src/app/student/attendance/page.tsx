@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-    CalendarCheck, 
     Wifi, 
     ShieldCheck, 
     CircleCheckBig, 
@@ -12,21 +11,14 @@ import {
     Database,
     Clock,
     CircleUser,
-    Info,
-    ChevronRight,
-    Search,
-    CircleX,
     TriangleAlert,
     FlaskConical,
     Loader2,
-    Box,
     Activity,
-    Camera,
     Upload
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { supabase } from "@/lib/supabase";
 import { useSecurity } from "@/context/SecurityContext";
 import '@/lib/bluetooth-types';
@@ -43,6 +35,23 @@ interface EnrolledLab {
 interface ActiveSession {
     id: string;
     course_code: string;
+    status?: 'ACTIVE' | 'COMPLETED';
+}
+
+interface AttendanceLog {
+    id: string;
+    scanned_at: string;
+    final_status: string;
+    class_sessions?: {
+        course_code?: string | null;
+    } | null;
+}
+
+interface AttendanceQrPayload {
+    s_id?: string;
+    t_id?: string;
+    v_code?: string;
+    [key: string]: unknown;
 }
 
 export default function AttendancePage() {
@@ -55,23 +64,20 @@ export default function AttendancePage() {
     // Core Logic States
     const [status, setStatus] = useState<AttendanceStatus>('LAB_SELECT');
     const [isProcessingFile, setIsProcessingFile] = useState(false);
-    const [scannedData, setScannedData] = useState<any>(null);
     const [enrolledLabs, setEnrolledLabs] = useState<EnrolledLab[]>([]);
     const [selectedLab, setSelectedLab] = useState<EnrolledLab | null>(null);
     const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
-    const [attendanceLogs, setAttendanceLogs] = useState<any[]>([]);
+    const [attendanceLogs, setAttendanceLogs] = useState<AttendanceLog[]>([]);
     
     // UI States
     const [loading, setLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
-    const [bluetoothStatus, setBluetoothStatus] = useState<'unknown' | 'ready' | 'disabled' | 'unsupported'>('unknown');
     const [isSecure, setIsSecure] = useState<boolean | null>(null);
-    const [searchQuery, setSearchQuery] = useState("");
     const [isIntegrityScanning, setIsIntegrityScanning] = useState(false);
     const [scanProgress, setScanProgress] = useState(0);
     const [scanState, setScanState] = useState("");
     const [isScannerStarting, setIsScannerStarting] = useState(false);
-    const [hasCamera, setHasCamera] = useState<boolean>(true);
+    const [localTxState, setLocalTxState] = useState<'IDLE' | 'VERIFYING' | 'SUCCESS' | 'ERROR' | 'INVALID_QR'>('IDLE');
     const scannerRef = useRef<Html5Qrcode | null>(null);
 
     // 1. Initial Identity & Lab Roster Fetch
@@ -92,7 +98,7 @@ export default function AttendancePage() {
                     
                     const labId = searchParams.get('lab');
                     if (labId) {
-                        const lab = labs.find((l: any) => l.id === labId);
+                        const lab = labs.find((l: EnrolledLab) => l.id === labId);
                         if (lab) setSelectedLab(lab);
                     }
                 } else {
@@ -121,10 +127,7 @@ export default function AttendancePage() {
                 setIsSecure(window.isSecureContext);
                 
                 if (navigator.bluetooth && navigator.bluetooth.getAvailability) {
-                    const available = await navigator.bluetooth.getAvailability();
-                    setBluetoothStatus(available ? 'ready' : 'disabled');
-                } else {
-                    setBluetoothStatus('unsupported');
+                    await navigator.bluetooth.getAvailability();
                 }
 
                 if (!window.isSecureContext && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
@@ -168,7 +171,7 @@ export default function AttendancePage() {
             // Log for debugging
             console.log("Starting BLE Scan. Target Prefix: 'LabBeacon', Service:", 'b5c879b2-3be9-450f-90e7-ecad1d7d242c');
             
-            const device = await navigator.bluetooth.requestDevice({
+            await navigator.bluetooth.requestDevice({
                 filters: [
                     { namePrefix: 'LabBeacon' },
                     { services: ['b5c879b2-3be9-450f-90e7-ecad1d7d242c'] }
@@ -205,9 +208,10 @@ export default function AttendancePage() {
             console.log("✅ Digital Session Locked:", sessions.id);
             setActiveSession(sessions);
             setStatus('BEACON_LOCKED');
-        } catch (err: any) {
+        } catch (err: unknown) {
              console.error("Proximity Check Failed:", err);
-             setErrorMessage(err.message || "Failed to detect Hardware ESP32 Beacon. Move closer to the classroom node.");
+             const errorMessage = err instanceof Error ? err.message : String(err);
+             setErrorMessage(errorMessage || "Failed to detect Hardware ESP32 Beacon. Move closer to the classroom node.");
              setStatus('LAB_SELECT');
         }
     };
@@ -232,7 +236,7 @@ export default function AttendancePage() {
                         try {
                             if (scannerRef.current.isScanning) await scannerRef.current.stop();
                             await scannerRef.current.clear();
-                        } catch(e) {}
+                        } catch {}
                     }
 
                     qrEngine = new Html5Qrcode("attendance-reader", { verbose: false });
@@ -248,12 +252,12 @@ export default function AttendancePage() {
                         { facingMode: "environment" },
                         config,
                         onScanSuccess,
-                        (err) => {}
+                        () => {}
                     );
                     
                     if (!isStopped) setIsScannerStarting(false);
                     console.log("Matrix Scanner: Optic sensor online.");
-                } catch (err: any) {
+                } catch (err: unknown) {
                     if (!isStopped) {
                         setIsScannerStarting(false);
                         console.error("Optic Initialization Failure:", err);
@@ -263,7 +267,6 @@ export default function AttendancePage() {
                             setErrorMessage("SECURE HANDSHAKE DENIED: Camera access blocked. Enable permissions in browser settings.");
                         } else if (errorMsg.includes("NotFoundError")) {
                             setErrorMessage("HARDWARE ERROR: No valid optical sensor detected.");
-                            setHasCamera(false);
                         } else {
                             setErrorMessage("SCANNER_FAILURE: Interface collision or hardware lock. Please refresh the matrix.");
                         }
@@ -277,17 +280,26 @@ export default function AttendancePage() {
                 if (qrEngine && qrEngine.isScanning) {
                     qrEngine.stop().then(() => {
                         console.log("Matrix Scanner: Optic sensor released.");
-                    }).catch(e => console.warn("Clean-up warning:", e));
+                    }).catch((cleanupError: unknown) => console.warn("Clean-up warning:", cleanupError));
                 }
                 scannerRef.current = null;
             };
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [status]);
 
     async function onScanSuccess(decodedText: string) {
         try {
+            // 1. TACTILE FEEDBACK: Haptic pulse for instant confirmation (UPI-like)
+            if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                navigator.vibrate(100);
+            }
+
+            // 2. Pause live scanner instead of stopping to maintain hardware state
             if (scannerRef.current) await scannerRef.current.pause(true);
-            const data = JSON.parse(decodedText);
+            
+            setLocalTxState('VERIFYING');
+            const data = JSON.parse(decodedText) as AttendanceQrPayload;
             
             // Verify session ID in QR matches the local active session
             if (!isTestMode && data.s_id !== activeSession?.id) {
@@ -295,23 +307,30 @@ export default function AttendancePage() {
                 throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
             }
 
-            setStatus('VERIFYING');
             await handleSubmitAttendance(data);
-        } catch (e: any) {
-            setErrorMessage(e.message || "Invalid Matrix QR Signature detected.");
-            setStatus('BEACON_LOCKED');
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            setErrorMessage(errorMessage || "Invalid Matrix QR Signature detected.");
+            setLocalTxState('INVALID_QR');
+            // Silent resume after 2 seconds to allow retry without unmounting
+            setTimeout(() => {
+                setLocalTxState('IDLE');
+                setErrorMessage(null);
+                if (scannerRef.current) scannerRef.current.resume();
+            }, 3000);
         }
     }
 
     // No-op for high-frequency scan errors, only log critical ones
     // function onScanError(err: any) {} 
 
-    const handleSubmitAttendance = async (qrData: any) => {
+    const handleSubmitAttendance = async (qrData: AttendanceQrPayload) => {
         if (!tempSessionId || !fingerprintHash || !selectedLab || !activeSession) return;
 
         if (isTestMode) {
             await new Promise(r => setTimeout(r, 1500));
-            setStatus('CONFIRMED');
+            setLocalTxState('SUCCESS');
+            setTimeout(() => setStatus('CONFIRMED'), 1000);
             return;
         }
 
@@ -327,21 +346,33 @@ export default function AttendancePage() {
                     s_id: qrData.s_id,
                     t_id: qrData.t_id,
                     v_code: qrData.v_code,
-                    beacon_status: 'CONNECTED' // Hardcoded here as we've already passed the proximity gate
+                    beacon_status: 'CONNECTED'
                 })
             });
 
             const result = await response.json();
             
             if (result.success) {
-                setStatus('CONFIRMED');
+                setLocalTxState('SUCCESS');
+                // Brief delay to show success overlay before full screen transition
+                setTimeout(() => setStatus('CONFIRMED'), 1200);
             } else {
                 setErrorMessage(result.error || "Submission rejected by central matrix.");
-                setStatus('BEACON_LOCKED');
+                setLocalTxState('ERROR');
+                setTimeout(() => {
+                    setLocalTxState('IDLE');
+                    setErrorMessage(null);
+                    if (scannerRef.current) scannerRef.current.resume();
+                }, 3000);
             }
-        } catch (err: any) {
+        } catch {
             setErrorMessage("Transmission Failure: Encryption node unreachable.");
-            setStatus('BEACON_LOCKED');
+            setLocalTxState('ERROR');
+            setTimeout(() => {
+                setLocalTxState('IDLE');
+                setErrorMessage(null);
+                if (scannerRef.current) scannerRef.current.resume();
+            }, 3000);
         }
     };
 
@@ -418,11 +449,11 @@ export default function AttendancePage() {
             if (scannerRef.current && scannerRef.current.isScanning) {
                 try {
                     await scannerRef.current.pause(true);
-                } catch (e) {}
+                } catch {}
             }
             
             // 2. Resize image instantly to handle high-res photos
-            const resizedDataUrl = await resizeImageForScan(file);
+            await resizeImageForScan(file);
             
             // 3. Initialize background decoder on the ISOLATED buffer to prevent Hardware Lock
             const backgroundBufferId = "file-qr-buffer";
@@ -433,21 +464,22 @@ export default function AttendancePage() {
                 const decodedText = await html5QrCode.scanFile(file, false);
                 
                 // 4. Cleanup background worker
-                try { await html5QrCode.clear(); } catch(e) {}
+                try { await html5QrCode.clear(); } catch {}
                 
                 // 5. Submit to standard protocol
                 await onScanSuccess(decodedText);
-            } catch (scanErr) {
-                try { await html5QrCode.clear(); } catch(e) {}
+            } catch {
+                try { await html5QrCode.clear(); } catch {}
                 throw new Error("UNREADABLE_SIGNATURE: The matrix could not decode this entry. Ensure the QR is clear and well-lit.");
             }
-        } catch (err: any) {
-            setErrorMessage(err.message || "File Manifestation Failure: Invalid or unreadable QR Signature.");
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : String(err);
+            setErrorMessage(errorMessage || "File Manifestation Failure: Invalid or unreadable QR Signature.");
         } finally {
             setIsProcessingFile(false);
             // Resume live sensor if it was held
             if (scannerRef.current) {
-                try { scannerRef.current.resume(); } catch(e) {}
+                try { scannerRef.current.resume(); } catch {}
             }
         }
     };
@@ -473,6 +505,26 @@ export default function AttendancePage() {
 
     return (
         <div className="space-y-12 pb-20 animate-in fade-in duration-700">
+            {/* UPI Laser Sync Styles */}
+            <style jsx global>{`
+                @keyframes scanner-laser {
+                    0% { top: 10%; opacity: 0; }
+                    50% { opacity: 1; }
+                    100% { top: 90%; opacity: 0; }
+                }
+                @keyframes pulse-ring {
+                    0% { transform: scale(0.8); opacity: 0.8; }
+                    100% { transform: scale(1.5); opacity: 0; }
+                }
+                #attendance-reader video {
+                    object-fit: cover !important;
+                    border-radius: 28px !important;
+                }
+                #attendance-reader {
+                    border: none !important;
+                }
+            `}</style>
+
             <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 px-2 lg:px-0">
                 <div>
                     <h2 className="text-3xl lg:text-4xl font-black text-slate-900 tracking-tighter mb-2 font-display">Institutional Attendance Node</h2>
@@ -574,8 +626,10 @@ export default function AttendancePage() {
                             {status === 'SCANNING_QR' && (
                                 <motion.div key="scanning" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col items-center text-center w-full">
                                     <div className="w-full max-w-sm aspect-square bg-slate-900 rounded-[40px] overflow-hidden border-[12px] border-white shadow-2xl relative">
-                                        <div id="attendance-reader" className="w-full h-full"></div>
+                                        {/* PERSISTENT SCANNER CORE */}
+                                        <div id="attendance-reader" className="w-full h-full relative z-10"></div>
                                         
+                                        {/* 1. INITIALIZING OVERLAY */}
                                         {isScannerStarting && (
                                             <div className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm flex flex-col items-center justify-center p-8 text-center text-white z-40">
                                                 <Loader2 size={40} className="animate-spin mb-4 text-[#0052a5]" />
@@ -583,20 +637,51 @@ export default function AttendancePage() {
                                             </div>
                                         )}
 
-                                        <div className="absolute inset-0 pointer-events-none border-2 border-emerald-500/30 opacity-20" />
-                                        
-                                        {errorMessage && (
-                                            <div className="absolute inset-0 bg-rose-500/95 flex flex-col items-center justify-center p-6 md:p-8 text-center text-white z-50 animate-in fade-in duration-300">
-                                                <TriangleAlert size={40} className="mb-4" />
-                                                <p className="text-xs md:text-sm font-black uppercase tracking-widest mb-4">Hardware Lockout</p>
-                                                <p className="text-[10px] md:text-xs font-bold text-white/80 mb-8 leading-relaxed px-4">{errorMessage}</p>
-                                                <div className="flex flex-col gap-3 w-full">
-                                                    <button onClick={() => { setErrorMessage(null); setStatus('SCANNING_QR'); }} className="bg-white text-rose-600 px-8 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-transform active:scale-95 shadow-xl">Retry Optic Sync</button>
-                                                    <button onClick={() => setStatus('LAB_SELECT')} className="text-white/60 hover:text-white text-[9px] font-black uppercase tracking-widest transition-colors mb-2">Back to Roster</button>
+                                        {/* 2. UPI LASER FEEDBACK (Always visible while scanning) */}
+                                        {localTxState === 'IDLE' && !isScannerStarting && (
+                                            <>
+                                                <div className="absolute top-[10%] left-[10%] right-[10%] bottom-[10%] border-2 border-emerald-500/40 rounded-3xl z-20 pointer-events-none">
+                                                    <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-emerald-500 rounded-tl-lg" />
+                                                    <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-emerald-500 rounded-tr-lg" />
+                                                    <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-emerald-500 rounded-bl-lg" />
+                                                    <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-emerald-500 rounded-br-lg" />
                                                 </div>
+                                                <div className="absolute left-[15%] right-[15%] h-[2px] bg-emerald-500 shadow-[0_0_15px_#10b981] z-20 pointer-events-none" style={{ animation: 'scanner-laser 2s infinite linear' }} />
+                                            </>
+                                        )}
+
+                                        {/* 3. VERIFICATION OVERLAY (Silent - No unmount) */}
+                                        {localTxState === 'VERIFYING' && (
+                                            <div className="absolute inset-0 bg-[#0052a5]/60 backdrop-blur-md flex flex-col items-center justify-center text-white z-40 animate-in zoom-in duration-300">
+                                                <div className="relative mb-6">
+                                                    <div className="w-20 h-20 bg-white/20 border-2 border-white/50 rounded-full flex items-center justify-center animate-pulse">
+                                                        <ShieldCheck size={32} />
+                                                    </div>
+                                                    <div className="absolute inset-0 rounded-full border-2 border-white" style={{ animation: 'pulse-ring 1s infinite' }} />
+                                                </div>
+                                                <p className="text-[10px] font-black uppercase tracking-[0.3em] italic">Handshake Active</p>
                                             </div>
                                         )}
-                                        {isTestMode && (
+
+                                        {/* 4. SUCCESS OVERLAY */}
+                                        {localTxState === 'SUCCESS' && (
+                                            <div className="absolute inset-0 bg-emerald-500 flex flex-col items-center justify-center text-white z-[50] animate-in zoom-in duration-300">
+                                                <CircleCheckBig size={64} className="mb-4 animate-bounce" />
+                                                <p className="text-xs font-black uppercase tracking-[0.4em]">Presence Anchored</p>
+                                            </div>
+                                        )}
+
+                                        {/* 5. ERROR OVERLAY (Auto-recoverable) */}
+                                        {(localTxState === 'ERROR' || localTxState === 'INVALID_QR') && (
+                                            <div className="absolute inset-0 bg-rose-500 flex flex-col items-center justify-center p-8 text-center text-white z-[50] animate-in fade-in duration-300">
+                                                <TriangleAlert size={40} className="mb-4" />
+                                                <p className="text-[10px] font-black uppercase tracking-widest mb-2">Sync Interrupted</p>
+                                                <p className="text-[9px] font-bold text-white/80 leading-relaxed italic">{errorMessage || "Invalid QR Structure"}</p>
+                                                <p className="mt-8 text-[8px] font-black uppercase tracking-widest opacity-50 animate-pulse">Retrying Interface...</p>
+                                            </div>
+                                        )}
+
+                                        {isTestMode && localTxState === 'IDLE' && (
                                             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[60]">
                                                 <button 
                                                     onClick={runShadowSimulation}
@@ -608,34 +693,23 @@ export default function AttendancePage() {
                                         )}
                                     </div>
                                     
-                                    {/* Mobile/HTTP Fallback Signature */}
-                                    {/* Background Buffer for Isolated QR Decoding */}
                                     <div id="file-qr-buffer" style={{ display: 'none' }} aria-hidden="true" />
                                     
                                     <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-sm">
                                         <div className="flex items-center gap-4 text-slate-300">
                                             <div className="w-2 h-2 bg-[#0052a5] rounded-full animate-pulse" />
-                                            <p className="text-[10px] font-black uppercase tracking-widest leading-none">Active Scan Node: Encrypted Digest</p>
+                                            <p className="text-[10px] font-black uppercase tracking-widest leading-none">UPI Matrix Mode: Point & Detect</p>
                                         </div>
                                         
                                         <div className="p-5 lg:p-6 bg-slate-50 rounded-[32px] border border-slate-100 w-full group/fallback relative overflow-hidden">
                                             {isProcessingFile && (
-                                                <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px] z-10 flex flex-col items-center justify-center p-4">
+                                                <div className="absolute inset-0 bg-white/70 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center p-4">
                                                     <Loader2 size={32} className="animate-spin text-[#0052a5] mb-2" />
-                                                    <p className="text-[9px] font-black text-[#0052a5] uppercase tracking-widest text-center">Optimizing Signature...</p>
+                                                    <p className="text-[9px] font-black text-[#0052a5] uppercase tracking-widest text-center">Optimizing...</p>
                                                 </div>
                                             )}
-                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center mb-4 leading-relaxed">
-                                                Hardware Restricted? (HTTPS REQ)<br/>
-                                                Use Optic Proxy Fallback
-                                            </p>
                                             <label className="flex-1">
-                                                <input 
-                                                    type="file" 
-                                                    accept="image/*" 
-                                                    onChange={handleFileScan}
-                                                    className="hidden" 
-                                                />
+                                                <input type="file" accept="image/*" onChange={handleFileScan} className="hidden" />
                                                 <div className="flex items-center justify-center gap-2 py-4 bg-white border-2 border-slate-100 hover:border-blue-500 hover:bg-blue-50 text-slate-400 hover:text-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all cursor-pointer">
                                                     <Upload size={14} />
                                                     Analyze Signature File
@@ -646,21 +720,6 @@ export default function AttendancePage() {
                                 </motion.div>
                             )}
 
-                            {status === 'VERIFYING' && (
-                                <motion.div key="verifying" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center text-center py-10 px-8 bg-white/50 backdrop-blur-md rounded-[40px] border-2 border-[#0052a5]/10 shadow-2xl relative overflow-hidden">
-                                    <div className="absolute inset-0 bg-blue-500/5 animate-pulse pointer-events-none" />
-                                    <div className="w-24 h-24 bg-[#0052a5] text-white rounded-[32px] flex items-center justify-center mb-8 shadow-[0_20px_40px_rgba(0,82,165,0.3)] animate-bounce">
-                                        <ShieldCheck size={48} strokeWidth={2.5} />
-                                    </div>
-                                    <h4 className="text-2xl font-black text-[#0052a5] tracking-tighter mb-4 uppercase italic">Encryption Handshake Active</h4>
-                                    <div className="space-y-2">
-                                        <p className="text-slate-400 text-[10px] font-black uppercase tracking-[0.3em] animate-pulse">Synchronizing Student Matrix</p>
-                                        <div className="w-48 h-1.5 bg-slate-100 rounded-full overflow-hidden mx-auto">
-                                            <motion.div initial={{ x: -100 }} animate={{ x: 200 }} transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }} className="w-1/2 h-full bg-[#0052a5] shadow-[0_0_10px_rgba(0,82,165,0.5)]" />
-                                        </div>
-                                    </div>
-                                </motion.div>
-                            )}
 
                             {status === 'CONFIRMED' && (
                                 <motion.div key="success" initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="flex flex-col items-center text-center py-6">
