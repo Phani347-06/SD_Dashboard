@@ -18,30 +18,53 @@ export default function StudentScanPage() {
   const [isProcessingFile, setIsProcessingFile] = useState(false);
   const router = useRouter();
   const scannerRef = useRef<Html5Qrcode | null>(null);
+  const isMountedRef = useRef(true);
+  const timeoutsRef = useRef<NodeJS.Timeout[]>([]);
   const { tempSessionId, fingerprintHash, clearSession } = useSecurity();
 
-  // 1. Auth & Security Check
+  // Helper to safely schedule timeouts
+  const safeTimeout = (callback: () => void, delay: number) => {
+    const id = setTimeout(() => {
+      if (isMountedRef.current) callback();
+    }, delay);
+    timeoutsRef.current.push(id);
+    return id;
+  };
+
+  // 1. Auth & Security Check (Order: Local Guards -> Cloud Auth)
   useEffect(() => {
-    const checkAuth = async () => {
+    isMountedRef.current = true;
+    
+    const runSecurityShield = async () => {
+      // Step A: Local Context Validation
+      if (!tempSessionId || !fingerprintHash) {
+         setStatus('ERROR');
+         setErrorMessage("No active security handshake detected. Please login again to re-manifest your identity.");
+         return;
+      }
+
+      if (typeof window !== 'undefined') {
+         if (!window.isSecureContext && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+            setErrorMessage("HTTPS REQUIRED: Camera and Bluetooth are disabled by the browser over insecure connections.");
+            setStatus('ERROR');
+            return;
+         }
+      }
+
+      // Step B: Peer Cloud Authentication
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      if (!user && isMountedRef.current) {
         router.push('/login');
       }
     };
-    checkAuth();
-    
-    if (!tempSessionId || !fingerprintHash) {
-       setStatus('ERROR');
-       setErrorMessage("No active security handshake detected. Please login again to re-manifest your identity.");
-       return;
-    }
 
-    if (typeof window !== 'undefined') {
-       if (!window.isSecureContext && window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
-          setErrorMessage("HTTPS REQUIRED: Camera and Bluetooth are disabled by the browser over insecure connections.");
-          setStatus('ERROR');
-       }
-    }
+    runSecurityShield();
+    
+    return () => {
+      isMountedRef.current = false;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      timeoutsRef.current.forEach(clearTimeout);
+    };
   }, [router, tempSessionId, fingerprintHash]);
 
   // 2. Scanner Lifecycle — Low-level Html5Qrcode (UPI Model)
@@ -180,7 +203,7 @@ export default function StudentScanPage() {
     // Prevent double-processing during existing transitions
     if (localTxState !== 'IDLE') return;
 
-    console.log("QR DETECTED: [Handshake Signature]");
+    console.log("QR DETECTED:", decodedText);
     try {
       // Haptic pulse
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -191,7 +214,20 @@ export default function StudentScanPage() {
       if (scannerRef.current) await scannerRef.current.pause(true);
       
       setLocalTxState('VERIFYING');
-      const qrData = JSON.parse(decodedText);
+      
+      // 🚀 Matrix Decoder (V1 Compactor Support)
+      let qrData: any;
+      if (decodedText.startsWith('v1|')) {
+        const parts = decodedText.split('|');
+        qrData = {
+          s_id: parts[1],
+          t_id: parts[2],
+          v_code: parts[3]
+        };
+      } else {
+        qrData = JSON.parse(decodedText);
+      }
+      
       const { s_id, t_id, v_code } = qrData; 
 
       if (!s_id || !t_id || !v_code) {
@@ -202,9 +238,9 @@ export default function StudentScanPage() {
       if (isBypassed) {
          console.log("Shadow Simulation: Anchoring presence locally...");
          setLocalTxState('SUCCESS');
-         setTimeout(() => {
+         safeTimeout(() => {
             setStatus('SUCCESS');
-            setTimeout(() => router.push('/student'), 2000);
+            safeTimeout(() => router.push('/student'), 2000);
          }, 1000);
          return;
       }
@@ -237,9 +273,9 @@ export default function StudentScanPage() {
       }
 
       setLocalTxState('SUCCESS');
-      setTimeout(() => {
+      safeTimeout(() => {
         setStatus('SUCCESS');
-        setTimeout(() => router.push('/student'), 2000);
+        safeTimeout(() => router.push('/student'), 2000);
       }, 1200);
 
     } catch (err: unknown) {
@@ -249,7 +285,7 @@ export default function StudentScanPage() {
       
       // Silent auto-recovery after 3s
       if (!errMsg.includes("SECURITY ALERT")) {
-        setTimeout(() => {
+        safeTimeout(() => {
           setLocalTxState('IDLE');
           setErrorMessage(null);
           if (scannerRef.current) {

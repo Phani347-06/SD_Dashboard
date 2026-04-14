@@ -79,6 +79,7 @@ export default function AttendancePage() {
     const [isScannerStarting, setIsScannerStarting] = useState(false);
     const [localTxState, setLocalTxState] = useState<'IDLE' | 'VERIFYING' | 'SUCCESS' | 'ERROR' | 'INVALID_QR'>('IDLE');
     const scannerRef = useRef<Html5Qrcode | null>(null);
+    const latestOnScanSuccessRef = useRef<(text: string) => Promise<void>>(async () => { });
 
     // 1. Initial Identity & Lab Roster Fetch
     useEffect(() => {
@@ -229,6 +230,11 @@ export default function AttendancePage() {
         }
     };
 
+    // 2. Stable Success Signature (Prevents Stale Closures)
+    useEffect(() => {
+        latestOnScanSuccessRef.current = onScanSuccess;
+    }, [localTxState, activeSession, isTestMode]);
+
     // 3. Scanner Protocol (Isolated Matrix Upgrade)
     useEffect(() => {
         let qrEngine: Html5Qrcode | null = null;
@@ -268,7 +274,7 @@ export default function AttendancePage() {
                         await scannerRef.current.start(
                             { facingMode: "environment" },
                             config,
-                            onScanSuccess,
+                            (text) => latestOnScanSuccessRef.current(text),
                             () => { }
                         );
                         setIsScannerStarting(false);
@@ -320,7 +326,7 @@ export default function AttendancePage() {
         // Prevent double-processing during existing transitions
         if (localTxState !== 'IDLE') return;
 
-        console.log("QR DETECTED: [Handshake Signature]");
+        console.log("QR DETECTED:", decodedText);
         try {
             if (typeof navigator !== 'undefined' && navigator.vibrate) {
                 navigator.vibrate(100);
@@ -329,7 +335,19 @@ export default function AttendancePage() {
             if (scannerRef.current) await scannerRef.current.pause(true);
 
             setLocalTxState('VERIFYING');
-            const data = JSON.parse(decodedText) as AttendanceQrPayload & { exp?: number };
+            
+            // 🚀 Matrix Decoder (V1 Compactor Support)
+            let data: AttendanceQrPayload & { exp?: number };
+            if (decodedText.startsWith('v1|')) {
+                const parts = decodedText.split('|');
+                data = {
+                    s_id: parts[1],
+                    t_id: parts[2],
+                    v_code: parts[3]
+                };
+            } else {
+                data = JSON.parse(decodedText);
+            }
 
             // 🛑 Issue #5: QR Expiry Check (Critical for Security)
             if (data.exp && data.exp < Math.floor(Date.now() / 1000)) {
@@ -340,15 +358,16 @@ export default function AttendancePage() {
                 throw new Error("Mismatched Laboratory Node. QR from an unauthorized unit.");
             }
 
-            // 🚀 UPI Refinement: OPTIMISTIC UI
-            // Show success immediately to the student if the local checks pass
+            // 🚀 UPI Refinement: OPTIMISTIC TRANSITION
+            // We show SUCCESS state in the overlay, but WAIT for the API to confirm before setStatus('CONFIRMED')
             setLocalTxState('SUCCESS');
 
-            // Fire API in background (Don't await if we want instant feel, but handle errors)
-            handleSubmitAttendance(data);
+            const isSubmitted = await handleSubmitAttendance(data);
 
-            // Shave time off the transition
-            setTimeout(() => setStatus('CONFIRMED'), 1000);
+            if (isSubmitted) {
+                // Only move to the final success screen if the server actually acknowledged us
+                setTimeout(() => setStatus('CONFIRMED'), 800);
+            }
 
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : String(err);
@@ -406,11 +425,21 @@ export default function AttendancePage() {
                     setLocalTxState('IDLE');
                     // Redundant: scanner is destroyed/recreated by setStatus('SCANNING_QR')
                 }, 3000);
+                return false;
             }
-        } catch {
+        } catch (err) {
+            console.error("Transmission Failure:", err);
             setErrorMessage("Transmission Failure: Encryption node unreachable.");
             setLocalTxState('ERROR');
+            
+            // Auto-recovery mirror
+            setTimeout(() => {
+                setStatus('SCANNING_QR');
+                setLocalTxState('IDLE');
+            }, 3000);
+            return false;
         }
+        return true;
     };
 
     const performIntegrityScan = async () => {
