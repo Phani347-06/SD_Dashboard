@@ -212,24 +212,36 @@ export default function AttendancePage() {
         }
     };
 
-    // 3. Scanner Protocol (Enhanced Matrix Upgrade)
+    // 3. Scanner Protocol (Isolated Matrix Upgrade)
     useEffect(() => {
         let qrEngine: Html5Qrcode | null = null;
+        let isStopped = false;
         
         if (status === 'SCANNING_QR') {
             const mountPointTimer = setTimeout(async () => {
+                if (isStopped) return;
+                
                 const container = document.getElementById("attendance-reader");
                 if (!container) return;
 
                 try {
                     setIsScannerStarting(true);
+                    
+                    // Cleanup any orphaned instance first
+                    if (scannerRef.current) {
+                        try {
+                            if (scannerRef.current.isScanning) await scannerRef.current.stop();
+                            await scannerRef.current.clear();
+                        } catch(e) {}
+                    }
+
                     qrEngine = new Html5Qrcode("attendance-reader", { verbose: false });
                     scannerRef.current = qrEngine;
 
                     const config = {
                         fps: 25, // Maximal frame rate for instant detection
                         disableFlip: false,
-                        qrbox: undefined, // Scan full frame for UPI-like snappiness
+                        qrbox: undefined, // Full frame scan
                     };
 
                     await qrEngine.start(
@@ -239,33 +251,35 @@ export default function AttendancePage() {
                         (err) => {}
                     );
                     
-                    setIsScannerStarting(false);
-                    console.log("Matrix Scanner: Zero-Latency sensor activated.");
+                    if (!isStopped) setIsScannerStarting(false);
+                    console.log("Matrix Scanner: Optic sensor online.");
                 } catch (err: any) {
-                    setIsScannerStarting(false);
-                    console.error("Optic Initialization Failure:", err);
+                    if (!isStopped) {
+                        setIsScannerStarting(false);
+                        console.error("Optic Initialization Failure:", err);
                         const errorMsg = String(err);
                         
                         if (errorMsg.includes("NotAllowedError") || errorMsg.includes("Permission denied")) {
-                            setErrorMessage("SECURE HANDSHAKE DENIED: Camera access blocked. Enable permissions or check if another app is using the sensor.");
+                            setErrorMessage("SECURE HANDSHAKE DENIED: Camera access blocked. Enable permissions in browser settings.");
                         } else if (errorMsg.includes("NotFoundError")) {
-                            setErrorMessage("HARDWARE ERROR: No valid optical sensor detected. Try the 'Analyze Signature File' fallback below.");
+                            setErrorMessage("HARDWARE ERROR: No valid optical sensor detected.");
                             setHasCamera(false);
-                        } else if (!window.isSecureContext) {
-                            setErrorMessage("HTTPS PROTOCOL REQ: Browser has disabled hardware access on this insecure node.");
                         } else {
-                            setErrorMessage("SCANNER_FAILURE: Interface collision or hardware lock.");
+                            setErrorMessage("SCANNER_FAILURE: Interface collision or hardware lock. Please refresh the matrix.");
                         }
                     }
-            }, 300);
+                }
+            }, 500); // Increased delay for stable DOM mounting
 
             return () => {
+                isStopped = true;
                 clearTimeout(mountPointTimer);
-                if (scannerRef.current && scannerRef.current.isScanning) {
-                    scannerRef.current.stop().then(() => {
-                        console.log("Matrix Scanner: Optic sensor deactivated.");
+                if (qrEngine && qrEngine.isScanning) {
+                    qrEngine.stop().then(() => {
+                        console.log("Matrix Scanner: Optic sensor released.");
                     }).catch(e => console.warn("Clean-up warning:", e));
                 }
+                scannerRef.current = null;
             };
         }
     }, [status]);
@@ -400,43 +414,41 @@ export default function AttendancePage() {
             setIsProcessingFile(true);
             setErrorMessage(null);
 
-            // 1. CRITICAL: Gracefully shutdown the live scanner if active to free up the sensor/DOM
+            // 1. Pause live scanner instead of stopping to maintain hardware state
             if (scannerRef.current && scannerRef.current.isScanning) {
                 try {
-                    await scannerRef.current.stop();
-                    console.log("Matrix Scanner: Optic sensor held for file manifestation.");
-                } catch (e) {
-                    console.warn("Sensor hold warning:", e);
-                }
+                    await scannerRef.current.pause(true);
+                } catch (e) {}
             }
             
-            // 1.5. Resize image instantly to handle high-res phone photos
+            // 2. Resize image instantly to handle high-res photos
             const resizedDataUrl = await resizeImageForScan(file);
             
-            // 2. Convert DataURL to File object for Html5Qrcode
-            const response = await fetch(resizedDataUrl);
-            const blob = await response.blob();
-            const optimizedFile = new File([blob], "re-scan.jpg", { type: "image/jpeg" });
-
-            // 3. Initialize isolated decoder on the cleared container
-            const html5QrCode = new Html5Qrcode("attendance-reader", { verbose: false });
+            // 3. Initialize background decoder on the ISOLATED buffer to prevent Hardware Lock
+            const backgroundBufferId = "file-qr-buffer";
+            const html5QrCode = new Html5Qrcode(backgroundBufferId, { verbose: false });
             
             try {
-                const decodedText = await html5QrCode.scanFile(optimizedFile, true);
+                // Scan the file (second param false means don't render it)
+                const decodedText = await html5QrCode.scanFile(file, false);
                 
-                // 4. Cleanup immediately
+                // 4. Cleanup background worker
                 try { await html5QrCode.clear(); } catch(e) {}
                 
                 // 5. Submit to standard protocol
                 await onScanSuccess(decodedText);
             } catch (scanErr) {
                 try { await html5QrCode.clear(); } catch(e) {}
-                throw new Error("Invalid or unreadable QR Signature.");
+                throw new Error("UNREADABLE_SIGNATURE: The matrix could not decode this entry. Ensure the QR is clear and well-lit.");
             }
         } catch (err: any) {
             setErrorMessage(err.message || "File Manifestation Failure: Invalid or unreadable QR Signature.");
         } finally {
             setIsProcessingFile(false);
+            // Resume live sensor if it was held
+            if (scannerRef.current) {
+                try { scannerRef.current.resume(); } catch(e) {}
+            }
         }
     };
 
@@ -597,6 +609,9 @@ export default function AttendancePage() {
                                     </div>
                                     
                                     {/* Mobile/HTTP Fallback Signature */}
+                                    {/* Background Buffer for Isolated QR Decoding */}
+                                    <div id="file-qr-buffer" style={{ display: 'none' }} aria-hidden="true" />
+                                    
                                     <div className="mt-8 flex flex-col items-center gap-4 w-full max-w-sm">
                                         <div className="flex items-center gap-4 text-slate-300">
                                             <div className="w-2 h-2 bg-[#0052a5] rounded-full animate-pulse" />
