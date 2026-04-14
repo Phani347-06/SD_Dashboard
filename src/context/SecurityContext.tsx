@@ -1,8 +1,13 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { generateInstitutionalFingerprint, hashFingerprint, generateVanguardUUID } from '@/lib/security';
 import { supabase } from '@/lib/supabase';
+
+interface SessionAnchor {
+  tempSessionId: string | null;
+  fingerprintHash: string | null;
+}
 
 interface SecurityContextType {
   tempSessionId: string | null;
@@ -10,6 +15,7 @@ interface SecurityContextType {
   setSession: (id: string, hash: string) => void;
   clearSession: () => void;
   isVerifying: boolean;
+  refreshSession: () => Promise<SessionAnchor>;
 }
 
 const SecurityContext = createContext<SecurityContextType | undefined>(undefined);
@@ -18,6 +24,7 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
   const [tempSessionId, setTempSessionId] = useState<string | null>(null);
   const [fingerprintHash, setFingerprintHash] = useState<string | null>(null);
   const [isVerifying, setIsVerifying] = useState(true);
+  const inFlightRefreshRef = useRef<Promise<SessionAnchor> | null>(null);
 
   const setSession = (id: string, hash: string) => {
     setTempSessionId(id);
@@ -30,14 +37,12 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
     sessionStorage.removeItem('__lab_sess_id');
   };
 
-  useEffect(() => {
-    let isDisposed = false;
-    let refreshInFlight = false;
+  const refreshSession = async (): Promise<SessionAnchor> => {
+    if (inFlightRefreshRef.current) {
+      return inFlightRefreshRef.current;
+    }
 
-    const reinitSecurity = async () => {
-      if (isDisposed || refreshInFlight) return;
-
-      refreshInFlight = true;
+    const refreshPromise = (async (): Promise<SessionAnchor> => {
       setIsVerifying(true);
 
       try {
@@ -45,7 +50,7 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
 
         if (!authSession?.user) {
           clearSession();
-          return;
+          return { tempSessionId: null, fingerprintHash: null };
         }
 
         const fingerprint = generateInstitutionalFingerprint();
@@ -67,7 +72,8 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
 
           if (sessionNode && sessionNode.fingerprint_hash === hash) {
             setSession(sessionNode.temp_session_id, hash);
-            return;
+            sessionStorage.setItem('__lab_sess_id', sessionNode.temp_session_id);
+            return { tempSessionId: sessionNode.temp_session_id, fingerprintHash: hash };
           }
         }
 
@@ -102,7 +108,7 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
         if (deviceSessionQuery.data) {
           setSession(deviceSessionQuery.data.temp_session_id, hash);
           sessionStorage.setItem('__lab_sess_id', deviceSessionQuery.data.temp_session_id);
-          return;
+          return { tempSessionId: deviceSessionQuery.data.temp_session_id, fingerprintHash: hash };
         }
 
         await supabase
@@ -141,37 +147,43 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
 
         if (manifestError) {
           console.error("Security Re-Manifestation Failure:", manifestError.message);
-          return;
+          return { tempSessionId: null, fingerprintHash: null };
         }
 
         setSession(tempId, hash);
         sessionStorage.setItem('__lab_sess_id', tempId);
+        return { tempSessionId: tempId, fingerprintHash: hash };
       } catch (err) {
         console.error("Security Re-Manifestation Failure:", err);
+        return { tempSessionId: null, fingerprintHash: null };
       } finally {
-        refreshInFlight = false;
-        if (!isDisposed) {
-          setIsVerifying(false);
-        }
+        setIsVerifying(false);
+        inFlightRefreshRef.current = null;
       }
-    };
+    })();
 
+    inFlightRefreshRef.current = refreshPromise;
+    return refreshPromise;
+  };
+
+  useEffect(() => {
+    let isDisposed = false;
     const refreshVisibleSession = () => {
       if (document.visibilityState === 'visible') {
-        reinitSecurity();
+        void refreshSession();
       }
     };
 
-    reinitSecurity();
+    void refreshSession();
 
     const heartbeatId = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
-        reinitSecurity();
+        void refreshSession();
       }
     }, 60_000);
 
     const { data: authListener } = supabase.auth.onAuthStateChange(() => {
-      reinitSecurity();
+      void refreshSession();
     });
 
     window.addEventListener('focus', refreshVisibleSession);
@@ -187,7 +199,7 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <SecurityContext.Provider value={{ tempSessionId, fingerprintHash, setSession, clearSession, isVerifying }}>
+    <SecurityContext.Provider value={{ tempSessionId, fingerprintHash, setSession, clearSession, isVerifying, refreshSession }}>
       {children}
     </SecurityContext.Provider>
   );

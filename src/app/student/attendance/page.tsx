@@ -57,7 +57,7 @@ interface AttendanceQrPayload {
 export default function AttendancePage() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { tempSessionId, fingerprintHash, isVerifying, clearSession } = useSecurity();
+    const { tempSessionId, fingerprintHash, isVerifying, clearSession, refreshSession } = useSecurity();
 
     const [isTestMode, setIsTestMode] = useState(false);
 
@@ -502,6 +502,9 @@ export default function AttendancePage() {
     }
 
     const handleSubmitAttendance = async (qrData: AttendanceQrPayload) => {
+        const refreshedAnchor = await refreshSession();
+        const effectiveTempSessionId = refreshedAnchor.tempSessionId ?? tempSessionId;
+        const effectiveFingerprintHash = refreshedAnchor.fingerprintHash ?? fingerprintHash;
         // 🛡️ RIGID HANDSHAKE GATE & SECURITY SANITY CHECKS
         if (isVerifying) {
             setErrorMessage("Security synchronization in progress. Please wait for the green shield.");
@@ -509,7 +512,7 @@ export default function AttendancePage() {
             return false;
         }
 
-        if (!tempSessionId || !fingerprintHash) {
+        if (!effectiveTempSessionId || !effectiveFingerprintHash) {
             setErrorMessage("IDENTITY_LOSS: Your security session has expired. Please refresh the page to re-authenticate.");
             setLocalTxState('ERROR');
             return false;
@@ -534,8 +537,8 @@ export default function AttendancePage() {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'x-session-id': tempSessionId,
-                    'x-fingerprint': fingerprintHash
+                    'x-session-id': effectiveTempSessionId,
+                    'x-fingerprint': effectiveFingerprintHash
                 },
                 body: JSON.stringify({
                     s_id: qrData.s_id,
