@@ -58,6 +58,7 @@ export async function POST(req: Request) {
       .from('sessions')
       .select('*, students(*)')
       .eq('temp_session_id', temp_session_id)
+      .eq('is_active', true)
       .single();
 
     if (sessionError || !session) {

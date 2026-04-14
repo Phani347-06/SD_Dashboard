@@ -70,7 +70,7 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
           }
 
           // 2. Try to re-anchor using device fingerprint (survives app closure/re-open)
-          const { data: deviceSession } = await supabase
+          const { data: deviceSession, error: recoveryError } = await supabase
             .from('sessions')
             .select('*')
             .eq('student_id', authSession.user.id)
@@ -80,6 +80,13 @@ export function SecurityProvider({ children }: { children: React.ReactNode }) {
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
+
+          if (recoveryError) {
+            console.error("🛡️ Security Matrix Recovery Failed:", recoveryError.message);
+            if (recoveryError.message.includes("created_at")) {
+              console.warn("CRITICAL: Database schema mismatch. Please run the SQL migration to add 'created_at'.");
+            }
+          }
 
           if (deviceSession) {
             console.log("🛡️ Session Anchor Recovered: Existing device node manifested.");
