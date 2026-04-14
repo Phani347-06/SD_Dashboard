@@ -53,6 +53,8 @@ export default function AttendancePage() {
     
     // Core Logic States
     const [status, setStatus] = useState<AttendanceStatus>('LAB_SELECT');
+    const [isProcessingFile, setIsProcessingFile] = useState(false);
+    const [scannedData, setScannedData] = useState<any>(null);
     const [enrolledLabs, setEnrolledLabs] = useState<EnrolledLab[]>([]);
     const [selectedLab, setSelectedLab] = useState<EnrolledLab | null>(null);
     const [activeSession, setActiveSession] = useState<ActiveSession | null>(null);
@@ -351,24 +353,79 @@ export default function AttendancePage() {
     };
 
     // 5. Institutional File Manifestation (HTTP Fallback)
+    // Helper to resize image before QR scanning to improve performance
+    const resizeImageForScan = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 800;
+                    const MAX_HEIGHT = 800;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width *= MAX_HEIGHT / height;
+                            height = MAX_HEIGHT;
+                        }
+                    }
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx?.drawImage(img, 0, 0, width, height);
+                    resolve(canvas.toDataURL('image/jpeg', 0.8));
+                };
+                img.onerror = reject;
+                img.src = e.target?.result as string;
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    };
+
     const handleFileScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
 
         try {
-            setStatus('VERIFYING');
-            // Manifest an isolated decoder instance for file analysis
-            const html5QrCode = new Html5Qrcode("attendance-reader");
-            const decodedText = await html5QrCode.scanFile(file, true);
+            setIsProcessingFile(true);
+            setErrorMessage(null);
             
-            // Handover to standard verification protocol
-            await onScanSuccess(decodedText);
+            // 1. Resize image instantly to handle high-res phone photos
+            const resizedDataUrl = await resizeImageForScan(file);
             
-            // Purge decoder logic
-            html5QrCode.clear();
+            // 2. Convert DataURL to File object for Html5Qrcode
+            const response = await fetch(resizedDataUrl);
+            const blob = await response.blob();
+            const optimizedFile = new File([blob], "re-scan.jpg", { type: "image/jpeg" });
+
+            // 3. Initialize isolated decoder
+            const html5QrCode = new Html5Qrcode("attendance-reader", { verbose: false });
+            
+            try {
+                const decodedText = await html5QrCode.scanFile(optimizedFile, true);
+                
+                // 4. Cleanup immediately
+                try { await html5QrCode.clear(); } catch(e) {}
+                
+                // 5. Submit to standard protocol
+                await onScanSuccess(decodedText);
+            } catch (scanErr) {
+                try { await html5QrCode.clear(); } catch(e) {}
+                throw new Error("Invalid or unreadable QR Signature.");
+            }
         } catch (err: any) {
-            setErrorMessage("File Manifestation Failure: Invalid or unreadable QR Signature.");
-            setStatus('SCANNING_QR');
+            setErrorMessage(err.message || "File Manifestation Failure: Invalid or unreadable QR Signature.");
+        } finally {
+            setIsProcessingFile(false);
         }
     };
 
@@ -535,21 +592,28 @@ export default function AttendancePage() {
                                             <p className="text-[10px] font-black uppercase tracking-widest leading-none">Active Scan Node: Encrypted Digest</p>
                                         </div>
                                         
-                                        <div className="p-5 lg:p-6 bg-slate-50 rounded-[32px] border border-slate-100 w-full group/fallback">
+                                        <div className="p-5 lg:p-6 bg-slate-50 rounded-[32px] border border-slate-100 w-full group/fallback relative overflow-hidden">
+                                            {isProcessingFile && (
+                                                <div className="absolute inset-0 bg-slate-900/10 backdrop-blur-[2px] z-10 flex flex-col items-center justify-center p-4">
+                                                    <Loader2 size={32} className="animate-spin text-[#0052a5] mb-2" />
+                                                    <p className="text-[9px] font-black text-[#0052a5] uppercase tracking-widest text-center">Optimizing Signature...</p>
+                                                </div>
+                                            )}
                                             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-center mb-4 leading-relaxed">
                                                 Hardware Restricted? (HTTPS REQ)<br/>
                                                 Use Optic Proxy Fallback
                                             </p>
-                                            <label className="flex items-center justify-center gap-3 bg-white border border-slate-200 py-3.5 px-6 rounded-2xl cursor-pointer hover:border-[#0052a5] hover:text-[#0052a5] transition-all text-[11px] font-black uppercase tracking-widest text-slate-800 shadow-sm active:scale-95">
+                                            <label className={`flex items-center justify-center gap-3 bg-white border border-slate-200 py-3.5 px-6 rounded-2xl cursor-pointer hover:border-[#0052a5] hover:text-[#0052a5] transition-all text-[11px] font-black uppercase tracking-widest text-slate-800 shadow-sm active:scale-95 ${isProcessingFile ? 'opacity-50 pointer-events-none' : ''}`}>
                                                 <input 
                                                     type="file" 
                                                     accept="image/*" 
                                                     capture="environment" 
                                                     className="hidden" 
                                                     onChange={handleFileScan}
+                                                    disabled={isProcessingFile}
                                                 />
                                                 <Camera size={18} className="text-[#0052a5]" />
-                                                Analyze Signature
+                                                {isProcessingFile ? 'Processing...' : 'Analyze Signature'}
                                             </label>
                                         </div>
                                     </div>
