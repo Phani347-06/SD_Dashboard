@@ -86,7 +86,7 @@ export async function POST(req: Request) {
           .maybeSingle();
 
         session = exactAnyStateQuery.data;
-        sessionError = exactAnyStateQuery.error ?? sessionError;
+        sessionError = exactAnyStateQuery.data ? null : (exactAnyStateQuery.error ?? sessionError);
       }
     }
 
@@ -117,8 +117,9 @@ export async function POST(req: Request) {
 
       if (latestFingerprintQuery.data) {
         session = latestFingerprintQuery.data;
+        sessionError = null;
       }
-      sessionError = latestFingerprintQuery.error ?? sessionError;
+      sessionError = latestFingerprintQuery.data ? null : (latestFingerprintQuery.error ?? sessionError);
 
       if (session) {
         console.log("ATTENDANCE_DEBUG: Session recovered via fingerprint fallback.", {
