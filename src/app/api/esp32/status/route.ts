@@ -13,6 +13,20 @@ interface BeaconHeartbeat {
   timestamp: string;
 }
 
+interface BeaconTelemetryRow {
+  id: string;
+  beacon_id: string;
+  major_id: number;
+  minor_id: number;
+  uuid: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  uptime_seconds: number;
+  wifi_rssi: number;
+  ip_address: string;
+  last_heartbeat: string;
+  raw_data: BeaconHeartbeat;
+}
+
 /**
  * POST /api/esp32/status
  * Receives heartbeat telemetry from ESP32 iBeacon devices
@@ -114,7 +128,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Add online/offline status based on last heartbeat freshness
-    const enhancedData = data.map((beacon) => {
+    const enhancedData = (data as BeaconTelemetryRow[]).map((beacon: BeaconTelemetryRow) => {
       const lastHeartbeatTime = new Date(beacon.last_heartbeat).getTime();
       const timeSinceHeartbeat = Date.now() - lastHeartbeatTime;
       const isOnline = timeSinceHeartbeat < 60000; // Online if heartbeat received within last 60 seconds
