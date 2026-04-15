@@ -105,7 +105,7 @@ export async function POST(req: Request) {
     diagnostics.checks.fingerprint_recovery_candidates = {
       passed: (fingerprintSessions?.length ?? 0) > 0,
       count: fingerprintSessions?.length ?? 0,
-      candidates: fingerprintSessions?.map((s) => ({
+      candidates: fingerprintSessions?.map((s: any) => ({
         temp_session_id: mask(s.temp_session_id),
         is_active: s.is_active,
         expires_at: s.expires_at,
