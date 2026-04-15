@@ -238,6 +238,10 @@ export default function StudentScanPage() {
           throw new Error("Detected Invalid Laboratory QR Signature format.");
         }
       }
+      
+      const s_id = qrData?.s_id || qrData?.sId || '';
+      const t_id = qrData?.t_id || qrData?.tId || '';
+      const v_code = qrData?.v_code || qrData?.v || qrData?.verification_code || '';
 
       // OPTIMISTIC UI: Mock local success for development bypass
       if (isBypassed) {
