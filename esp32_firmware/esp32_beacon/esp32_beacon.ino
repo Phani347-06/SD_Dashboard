@@ -12,9 +12,8 @@
 #define WIFI_SSID "IRON MAN"
 #define WIFI_PASSWORD "12345678"
 
-// 🚀 UPGRADED: Moving from Vercel to Render for improved IoT stability
-// Use your actual Render URL here (likely ends in .onrender.com)
-#define SERVER_URL "https://sd-dashboard-temp.onrender.com/api/esp32/status"
+// 🚀 UPGRADED: Backend successfully migrated to Render
+#define SERVER_URL "https://sd-dashboard.onrender.com/api/esp32/status"
 #define HEARTBEAT_INTERVAL 30000 
 
 // iBeacon Configuration
