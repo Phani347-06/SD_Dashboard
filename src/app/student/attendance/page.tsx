@@ -555,7 +555,7 @@ export default function AttendancePage() {
                 const errorData = await response.json().catch(() => ({}));
                 console.error("🔒 SECURITY_HANDSHAKE_401:", errorData.error || "Unknown Identity Error");
                 
-                setErrorMessage(`Security session expired or mismatch: ${errorData.error || "Invalid Token"}. Re-synchronizing...`);
+                setErrorMessage(`Security session expired or mismatch: ${errorData.error || "Invalid Token"}${errorData?.debug ? ` [${Object.entries(errorData.debug).map(([key, value]) => `${key}=${String(value)}`).join(', ')}]` : ''}. Re-synchronizing...`);
                 setLocalTxState('ERROR');
                 
                 setTimeout(() => {

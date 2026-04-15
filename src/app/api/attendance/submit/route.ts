@@ -65,6 +65,16 @@ export async function POST(req: Request) {
     // 1. Session Integrity Node Check
     let session = null;
     let sessionError = null;
+    const sessionDebug = {
+      tempSessionProvided: Boolean(temp_session_id),
+      fingerprintProvided: Boolean(fingerprint_hash),
+      exactActiveFound: false,
+      exactAnyFound: false,
+      fingerprintFallbackFound: false,
+      selectedSessionUsable: false,
+      requestedTempSessionId: mask(temp_session_id),
+      selectedTempSessionId: "null",
+    };
 
     if (temp_session_id) {
       const exactActiveQuery = await db
@@ -76,6 +86,7 @@ export async function POST(req: Request) {
 
       session = exactActiveQuery.data;
       sessionError = exactActiveQuery.error;
+      sessionDebug.exactActiveFound = Boolean(exactActiveQuery.data);
 
       // Recovery path: tolerate stale deactivation state for the exact same session node.
       if (!session) {
@@ -87,6 +98,7 @@ export async function POST(req: Request) {
 
         session = exactAnyStateQuery.data;
         sessionError = exactAnyStateQuery.data ? null : (exactAnyStateQuery.error ?? sessionError);
+        sessionDebug.exactAnyFound = Boolean(exactAnyStateQuery.data);
       }
     }
 
@@ -118,6 +130,7 @@ export async function POST(req: Request) {
       if (latestFingerprintQuery.data) {
         session = latestFingerprintQuery.data;
         sessionError = null;
+        sessionDebug.fingerprintFallbackFound = true;
       }
       sessionError = latestFingerprintQuery.data ? null : (latestFingerprintQuery.error ?? sessionError);
 
@@ -129,16 +142,35 @@ export async function POST(req: Request) {
       }
     }
 
+    sessionDebug.selectedSessionUsable = isSessionUsable(session);
+    sessionDebug.selectedTempSessionId = mask(session?.temp_session_id);
+
     if (sessionError || !session) {
-      console.log("ATTENDANCE_DEBUG: Session invalid or expired for ID:", mask(temp_session_id), "reason:", sessionError?.message);
-      return NextResponse.json({ error: 'Session invalid or expired' }, { status: 401 });
+      console.log("ATTENDANCE_DEBUG: Session invalid or expired for ID:", mask(temp_session_id), "reason:", sessionError?.message, sessionDebug);
+      return NextResponse.json({
+        error: 'Session invalid or expired',
+        debug: {
+          stage: 'session_lookup',
+          reason: sessionError?.message || 'no_session_match',
+          ...sessionDebug,
+        }
+      }, { status: 401 });
     }
 
     // 2. Device Fingerprint Binding Validation
     if (session.fingerprint_hash !== fingerprint_hash) {
       console.log("ATTENDANCE_DEBUG: Device fingerprint mismatch.");
       // Soft Guard: We no longer purge the session artifact to allow for retry/debug.
-      return NextResponse.json({ error: 'Device mismatch detected. Ensure you are using the same browser node used for login.' }, { status: 401 });
+      return NextResponse.json({
+        error: 'Device mismatch detected. Ensure you are using the same browser node used for login.',
+        debug: {
+          stage: 'fingerprint_check',
+          requestedTempSessionId: mask(temp_session_id),
+          selectedTempSessionId: mask(session.temp_session_id),
+          requestedFingerprint: mask(fingerprint_hash),
+          selectedFingerprint: mask(session.fingerprint_hash),
+        }
+      }, { status: 401 });
     }
 
     // 3. Expiration Pulse
