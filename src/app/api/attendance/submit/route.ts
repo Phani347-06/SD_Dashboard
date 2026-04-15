@@ -273,17 +273,6 @@ export async function POST(req: Request) {
       }, { status: 403 });
     }
 
-    // ⏳ CHRONOLOGICAL RIGIDITY CHECK
-    const qrExpiresAtMs = new Date(qrSession.expires_at).getTime();
-    const currentTimeMs = Date.now();
-    const graceWindow = 120000; // 120s (2m) grace period for synchronized rotation & clock drift
-
-    // Removed is_active check as per Hard Deletion Protocol
-    if (currentTimeMs > (qrExpiresAtMs + graceWindow)) {
-        console.log("ATTENDANCE_DEBUG: QR Token stale beyond grace window.");
-        return NextResponse.json({ error: 'QR Signature Expired: Please scan the refreshed matrix.' }, { status: 403 });
-    }
-
     // 5. Duplicate Submission Prevention
     if (session.attendance_submitted) {
       console.log("ATTENDANCE_DEBUG: Attendance already manifested for student.");
@@ -324,13 +313,7 @@ export async function POST(req: Request) {
         token_id_snapshot: qrSession.temp_session_id, 
         device_fingerprint_match: true,
         stage_1_passed: true,
-        final_status: 'VERIFIED',
-        telemetry: {
-          handshake_v: "2.1.3",
-          ua: req.headers.get('user-agent'),
-          ip: req.headers.get('x-forwarded-for') || "unknown",
-          ts: new Date().toISOString()
-        }
+        final_status: 'VERIFIED'
       })
       .select('id')
       .single();
