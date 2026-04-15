@@ -81,7 +81,7 @@ export async function POST(req: Request) {
     if (temp_session_id) {
       const exactActiveQuery = await db
         .from('sessions')
-        .select('*, students(*)')
+        .select('*')
         .eq('temp_session_id', temp_session_id)
         .eq('is_active', true)
         .maybeSingle();
@@ -94,7 +94,7 @@ export async function POST(req: Request) {
       if (!session) {
         const exactAnyStateQuery = await db
           .from('sessions')
-          .select('*, students(*)')
+          .select('*')
           .eq('temp_session_id', temp_session_id)
           .maybeSingle();
 
@@ -109,7 +109,7 @@ export async function POST(req: Request) {
     if ((!session || !isSessionUsable(session)) && fingerprint_hash) {
       let latestFingerprintQuery = await db
         .from('sessions')
-        .select('*, students(*)')
+        .select('*')
         .eq('fingerprint_hash', fingerprint_hash)
         .eq('is_active', true)
         .gt('expires_at', new Date().toISOString())
@@ -120,7 +120,7 @@ export async function POST(req: Request) {
       if (latestFingerprintQuery.error?.message?.includes('created_at')) {
         latestFingerprintQuery = await db
           .from('sessions')
-          .select('*, students(*)')
+          .select('*')
           .eq('fingerprint_hash', fingerprint_hash)
           .eq('is_active', true)
           .gt('expires_at', new Date().toISOString())
