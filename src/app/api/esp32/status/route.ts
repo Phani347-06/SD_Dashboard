@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { supabaseAdmin } from '@/lib/supabase';
 
 interface BeaconHeartbeat {
   beacon_id: string;
@@ -20,6 +20,13 @@ interface BeaconHeartbeat {
  */
 export async function POST(request: NextRequest) {
   try {
+    if (!supabaseAdmin) {
+      return NextResponse.json(
+        { error: 'Supabase admin client is not configured on the server' },
+        { status: 500 }
+      );
+    }
+
     const payload: BeaconHeartbeat = await request.json();
 
     // Validate required fields
@@ -31,7 +38,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Store beacon status in Supabase
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('beacon_telemetry')
       .upsert(
         {
@@ -67,6 +74,7 @@ export async function POST(request: NextRequest) {
         message: 'Beacon heartbeat recorded',
         beacon_id: payload.beacon_id,
         server_timestamp: new Date().toISOString(),
+        stored_row: data ?? null,
       },
       { status: 200 }
     );
@@ -85,7 +93,14 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    const { data, error } = await supabase
+    if (!supabaseAdmin) {
+      return NextResponse.json(
+        { error: 'Supabase admin client is not configured on the server' },
+        { status: 500 }
+      );
+    }
+
+    const { data, error } = await supabaseAdmin
       .from('beacon_telemetry')
       .select('*')
       .order('last_heartbeat', { ascending: false });

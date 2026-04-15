@@ -229,24 +229,35 @@ export async function POST(req: Request) {
 
     // 4. Laboratory QR Verification (Dual Layer)
     // 🛡️ RIGID PROTOCOL: We fetch the token by its unique ID but allow a grace window if recently rotated.
-    const { data: qrSession, error: qrError } = await (supabaseAdmin || supabase)
+    const { data: qrSession, error: qrError } = await db
       .from('temp_qr_sessions')
       .select('*, class_sessions(*)')
       .eq('temp_session_id', qr_token_id) 
       .eq('class_session_id', class_session_id) 
       .eq('verification_code', v_code_final)
-      .order('expires_at', { ascending: false })
-      .limit(1)
       .maybeSingle();
 
     if (qrError || !qrSession) {
+      // Diagnostic Trace: check if the class_session exists at all
+      const { data: classExists } = await db.from('class_sessions').select('id').eq('id', class_session_id).maybeSingle();
+      const { data: anyToken } = await db.from('temp_qr_sessions').select('temp_session_id, verification_code').eq('class_session_id', class_session_id).order('expires_at', { ascending: false }).limit(1).maybeSingle();
+
       console.log("ATTENDANCE_DEBUG: Laboratory QR Signature Mismatch.", {
-         input_qr_token_id: qr_token_id,
-         input_class_session_id: class_session_id,
-         input_v_code: v_code_final,
+         input: { qr_token_id: mask(qr_token_id), class_id: mask(class_session_id), v_code: mask(v_code_final) },
+         database: { 
+            class_exists: !!classExists, 
+            latest_token_id: mask(anyToken?.temp_session_id),
+            latest_v_code: mask(anyToken?.verification_code)
+         },
          db_error: qrError?.message
       });
-      return NextResponse.json({ error: 'Invalid QR Signature: Matrix mismatch detected or expired.' }, { status: 403 });
+      return NextResponse.json({ 
+        error: 'Invalid QR Signature: Matrix mismatch detected or expired.',
+        debug: {
+          stage: 'qr_verification',
+          reason: !qrSession ? 'node_mismatch' : 'db_error'
+        }
+      }, { status: 403 });
     }
 
     // ⏳ CHRONOLOGICAL RIGIDITY CHECK

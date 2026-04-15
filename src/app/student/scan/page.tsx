@@ -215,9 +215,16 @@ export default function StudentScanPage() {
       
       setLocalTxState('VERIFYING');
       
-      // 🚀 Matrix Decoder (V1 Compactor Support)
+      // 🚀 Matrix Decoder (V2 & V1 Compactor Support)
       let qrData: any;
-      if (decodedText.startsWith('v1|')) {
+      if (decodedText.startsWith('v2|')) {
+        const parts = decodedText.split('|');
+        qrData = {
+          s_id: parts[1],
+          t_id: parts[2],
+          v_code: parts[3]
+        };
+      } else if (decodedText.startsWith('v1|')) {
         const parts = decodedText.split('|');
         qrData = {
           s_id: parts[1],
@@ -225,13 +232,11 @@ export default function StudentScanPage() {
           v_code: parts[3]
         };
       } else {
-        qrData = JSON.parse(decodedText);
-      }
-      
-      const { s_id, t_id, v_code } = qrData; 
-
-      if (!s_id || !t_id || !v_code) {
-        throw new Error("Detected Invalid Laboratory QR Signature.");
+        try {
+          qrData = JSON.parse(decodedText);
+        } catch (e) {
+          throw new Error("Detected Invalid Laboratory QR Signature format.");
+        }
       }
 
       // OPTIMISTIC UI: Mock local success for development bypass

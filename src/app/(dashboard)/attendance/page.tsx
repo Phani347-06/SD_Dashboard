@@ -332,8 +332,8 @@ export default function AttendancePage() {
 
   // 🛡️ STABILITY GUARD: Anchor QR expiry to the manifested temp session node 
   const qrExpiry = tempSession?.expires_at 
-    ? Math.floor(new Date(tempSession.expires_at).getTime() / 1000) - 120 
-    : Math.floor((Date.now() + 600000) / 1000);
+    ? Math.floor(new Date(tempSession.expires_at).getTime() / 1000) 
+    : Math.floor((Date.now() + 720000) / 1000);
 
   const qrValue = `v2|${(session?.id || '').trim()}|${(tempSession?.temp_session_id || '').trim()}|${(tempSession?.verification_code || '').trim()}|${qrExpiry}`;
 
