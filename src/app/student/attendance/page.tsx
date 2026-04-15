@@ -57,7 +57,7 @@ interface AttendanceQrPayload {
 export default function AttendancePage() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const { tempSessionId, fingerprintHash, isVerifying, clearSession, refreshSession } = useSecurity();
+    const { tempSessionId, fingerprintHash, isVerifying, refreshSession } = useSecurity();
 
     const [isTestMode, setIsTestMode] = useState(false);
 
@@ -558,10 +558,6 @@ export default function AttendancePage() {
                 setErrorMessage(`Security session expired or mismatch: ${errorData.error || "Invalid Token"}${errorData?.debug ? ` [${Object.entries(errorData.debug).map(([key, value]) => `${key}=${String(value)}`).join(', ')}]` : ''}. Re-synchronizing...`);
                 setLocalTxState('ERROR');
                 
-                setTimeout(() => {
-                    clearSession(); // Wipe bad anchor
-                    window.location.reload();
-                }, 3000);
                 return false;
             }
 

@@ -7,8 +7,8 @@
 #include <HTTPClient.h>
 
 // WiFi Configuration (Update these with your network details)
-#define WIFI_SSID "Airtel_rama_5008"
-#define WIFI_PASSWORD "air18995"
+#define WIFI_SSID "IRON MAN"
+#define WIFI_PASSWORD "12345678"
 
 // Backend Server Configuration
 // ⚠️ DEVELOPMENT: "http://192.168.1.15:3000/api/esp32/status"
