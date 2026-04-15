@@ -344,7 +344,7 @@ export async function POST(req: Request) {
     const { error: updateError } = await (supabaseAdmin || supabase)
       .from('sessions')
       .update({ attendance_submitted: true })
-      .eq('row_id', session.row_id || session.id); // Try to use row_id or id
+      .eq('temp_session_id', session.temp_session_id);
 
     if (updateError) {
        console.log("ATTENDANCE_DEBUG: Session Update Failure. Rolling back log record...");
