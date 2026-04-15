@@ -390,11 +390,6 @@ export async function POST(req: Request) {
     }
 
     return NextResponse.json({ success: true, message: 'Institutional Attendance Manifested' });
-    } catch (emailErr: any) {
-      console.error("ATTENDANCE_DEBUG: Resend SDK Runtime Error:", emailErr.message);
-    }
-
-    return NextResponse.json({ success: true, message: 'Institutional Attendance Manifested' });
 
   } catch (err: any) {
     console.error('Attendance Matrix Protocol Error:', err);
