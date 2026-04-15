@@ -292,11 +292,20 @@ export async function POST(req: Request) {
 
     // 6. Enrollment Verification (Final Gate)
     // Using supabaseAdmin to bypass RLS for institutional verification
+    const labId = Array.isArray(qrSession.class_sessions) 
+      ? qrSession.class_sessions[0]?.lab_id 
+      : qrSession.class_sessions?.lab_id;
+
+    if (!labId) {
+       console.log("ATTENDANCE_DEBUG: Integrity Violation - Missing Lab ID in QR Session.");
+       return NextResponse.json({ error: 'System Integrity Error: Laboratory context lost.' }, { status: 500 });
+    }
+
     const { data: enrollment, error: enrollmentError } = await (supabaseAdmin || supabase)
       .from('lab_students')
       .select('id')
       .eq('student_id', session.student_id)
-      .eq('lab_id', qrSession.class_sessions.lab_id)
+      .eq('lab_id', labId)
       .single();
 
     if (enrollmentError || !enrollment) {
@@ -305,19 +314,19 @@ export async function POST(req: Request) {
     }
 
     // 7. Manifest Attendance Log
-    const { data: logData, error: logError } = await supabase
+    const { data: logData, error: logError } = await (supabaseAdmin || supabase)
       .from('attendance_logs')
       .insert({
         class_session_id,
-        temp_session_id: qrSession.temp_session_id, // Link to the specific QR window
+        temp_session_id: qrSession.temp_session_id, 
         student_id: session.student_id,
-        qr_code_snapshot: qrSession.verification_code, // Audit Audit Persistence
-        token_id_snapshot: qrSession.temp_session_id, // Forensics Traceability
+        qr_code_snapshot: qrSession.verification_code, 
+        token_id_snapshot: qrSession.temp_session_id, 
         device_fingerprint_match: true,
         stage_1_passed: true,
         final_status: 'VERIFIED',
         telemetry: {
-          handshake_v: "2.1.2",
+          handshake_v: "2.1.3",
           ua: req.headers.get('user-agent'),
           ip: req.headers.get('x-forwarded-for') || "unknown",
           ts: new Date().toISOString()
@@ -332,68 +341,42 @@ export async function POST(req: Request) {
     }
 
     // 8. Update Session State (Atomic Verification)
-    const { error: updateError } = await supabase
+    const { error: updateError } = await (supabaseAdmin || supabase)
       .from('sessions')
       .update({ attendance_submitted: true })
-      .eq('temp_session_id', session.temp_session_id);
+      .eq('row_id', session.row_id || session.id); // Try to use row_id or id
 
     if (updateError) {
        console.log("ATTENDANCE_DEBUG: Session Update Failure. Rolling back log record...");
-       
-       // Rollback: Attempt to delete the log record to prevent inconsistency
-       const { error: rollbackError } = await supabase
-         .from('attendance_logs')
-         .delete()
-         .eq('id', logData.id);
-
-       if (rollbackError) {
-          console.error("ATTENDANCE_DEBUG: ROLLBACK CRITICAL FAILURE. Log inconsistency remains for ID:", logData.id, rollbackError.message);
-          return NextResponse.json({ 
-             error: 'CRITICAL STATE ERROR: Attendance record created but session state update failed, and rollback failed. Please contact Lab Administration.',
-             log_id: logData.id
-          }, { status: 500 });
-       }
-
-       console.log("ATTENDANCE_DEBUG: Rollback successful for log:", logData.id);
-       return NextResponse.json({ error: 'System inconsistency during state commit. The transaction has been rolled back. Please scan again.' }, { status: 500 });
+       await (supabaseAdmin || supabase).from('attendance_logs').delete().eq('id', logData.id);
+       return NextResponse.json({ error: 'System inconsistency during state commit.' }, { status: 500 });
     }
 
     // 9. Institutional Receipt Dispatch (Resend Node)
     try {
       const { resend } = await import('@/lib/resend');
+      // Relationship Fix: student mapping
       const student = session.students;
+      const classSession = Array.isArray(qrSession.class_sessions) 
+        ? qrSession.class_sessions[0] 
+        : qrSession.class_sessions;
       
-      // Email Diagnostic Logging
-      const resendKeyPresent = !!process.env.RESEND_API_KEY;
-      console.log("ATTENDANCE_DEBUG: Email Dispatch Metadata", {
-         student_found: !!student,
-         roll_no: student?.roll_no,
-         full_name: student?.full_name,
-         resend_api_key_configured: resendKeyPresent,
-         environment: process.env.NODE_ENV
-      });
-
-      if (!student || !student.roll_no) {
-         console.warn("ATTENDANCE_DEBUG: Email skipped - Student data missing roll_no.");
-      } else {
+      if (student && student.roll_no && classSession) {
          const studentEmail = `${student.roll_no}@vnrvjiet.in`;
-         console.log("ATTENDANCE_DEBUG: Attempting to send email via Resend to", studentEmail);
-         
-         const { data, error: resendErr } = await resend.emails.send({
+         await resend.emails.send({
            from: 'no-reply@coolie.me',
            to: [studentEmail],
-           subject: `✅ Attendance Verified: ${qrSession.class_sessions.course_code}`,
+           subject: `✅ Attendance Verified: ${classSession.course_code || 'LAB'}`,
            html: `
              <div style="font-family: sans-serif; padding: 20px; color: #333; line-height: 1.6;">
                <div style="background: #008a00; padding: 20px; border-radius: 12px; margin-bottom: 20px;">
                   <h2 style="color: white; margin: 0;">Attendance Confirmed</h2>
                </div>
                <p>Hello <strong>${student.full_name || 'Student'}</strong> (${student.roll_no}),</p>
-               <p>Your institutional presence for <strong>${qrSession.class_sessions.course_code}</strong> has been verified via hardware handshake.</p>
+               <p>Your institutional presence for <strong>${classSession.course_code || 'Laboratory'}</strong> has been verified via hardware handshake.</p>
                <div style="margin-top: 20px; padding: 15px; background: #f4f4f4; border-radius: 8px; font-size: 12px;">
                    <p style="margin: 0;"><strong>Timestamp:</strong> ${new Date().toLocaleString()}</p>
-                   <p style="margin: 0;"><strong>Session Node:</strong> ${class_session_id}</p>
-                   <p style="margin: 0;"><strong>Integrity Status:</strong> SECURE_MANIFEST_V2</p>
+                   <p style="margin: 0;"><strong>Integrity Status:</strong> SECURE_MANIFEST_V2.1</p>
                </div>
                <p style="font-size: 10px; color: #999; margin-top: 30px;">
                  This is an automated institutional receipt. No further action is required.
@@ -401,17 +384,12 @@ export async function POST(req: Request) {
              </div>
            `,
          });
-
-         if (resendErr) {
-           console.error("ATTENDANCE_DEBUG: Resend API Rejected the email.", {
-              error: resendErr,
-              code: (resendErr as any).name || (resendErr as any).code,
-              message: (resendErr as any).message
-           });
-         } else {
-           console.log("ATTENDANCE_DEBUG: Resend Accepted - Message ID:", data?.id);
-         }
       }
+    } catch (emailErr: any) {
+      console.error("ATTENDANCE_DEBUG: Resend Non-Critical Error:", emailErr.message);
+    }
+
+    return NextResponse.json({ success: true, message: 'Institutional Attendance Manifested' });
     } catch (emailErr: any) {
       console.error("ATTENDANCE_DEBUG: Resend SDK Runtime Error:", emailErr.message);
     }
