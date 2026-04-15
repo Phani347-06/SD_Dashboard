@@ -49,6 +49,8 @@ export async function POST(req: Request) {
       fingerprint_hash: mask(fingerprint_hash)
     });
     
+    console.log("ATTENDANCE_DEBUG: Session lookup about to start for student with temp_session_id:", mask(temp_session_id));
+    
     // 🔍 HARDENED CHECK: Student MUST prove beacon proximity
     // Server-side gate: 'BYPASSED' is only valid in development environments
     const isDevelopment = process.env.NODE_ENV === 'development';
@@ -145,8 +147,26 @@ export async function POST(req: Request) {
     sessionDebug.selectedSessionUsable = isSessionUsable(session);
     sessionDebug.selectedTempSessionId = mask(session?.temp_session_id);
 
+    if (session && isSessionUsable(session)) {
+      console.log("ATTENDANCE_DEBUG: ✅ Session is valid and usable", {
+        temp_session_id: mask(session.temp_session_id),
+        student_id: mask(session.student_id),
+        is_active: session.is_active,
+        expires_at: session.expires_at,
+        created_at: session.created_at,
+        fingerprint_match: session.fingerprint_hash === fingerprint_hash,
+      });
+    }
+
     if (sessionError || !session) {
-      console.log("ATTENDANCE_DEBUG: Session invalid or expired for ID:", mask(temp_session_id), "reason:", sessionError?.message, sessionDebug);
+      console.log("ATTENDANCE_DEBUG: Session invalid or expired for ID:", mask(temp_session_id), {
+        hasError: !!sessionError,
+        errorMessage: sessionError?.message,
+        foundSession: !!session,
+        debug: sessionDebug,
+        recoveryAttempted: sessionDebug.fingerprintFallbackFound,
+        overallAssessment: !session ? 'NO_SESSION_FOUND' : 'SESSION_FOUND_BUT_UNUSABLE'
+      });
       return NextResponse.json({
         error: 'Session invalid or expired',
         debug: {
@@ -177,6 +197,34 @@ export async function POST(req: Request) {
     if (new Date(session.expires_at) < new Date()) {
       console.log("ATTENDANCE_DEBUG: Session expired chronologically.");
       return NextResponse.json({ error: 'Session expired — please login again' }, { status: 401 });
+    }
+
+    // 3.5 ENHANCEMENT: Proactive Session Renewal
+    // If session is within 30 minutes of expiring, extend it for another 4 hours
+    const now = new Date();
+    const expiresAt = new Date(session.expires_at);
+    const timeUntilExpiry = expiresAt.getTime() - now.getTime();
+    const thirtyMinutesMs = 30 * 60 * 1000;
+
+    if (timeUntilExpiry < thirtyMinutesMs) {
+      const newExpiresAt = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString();
+      console.log("ATTENDANCE_DEBUG: Session expiring soon, extending expiration", {
+        current_expires_at: session.expires_at,
+        new_expires_at: newExpiresAt,
+        minutes_remaining: Math.floor(timeUntilExpiry / 60000),
+      });
+
+      const { error: renewError } = await db
+        .from('sessions')
+        .update({ expires_at: newExpiresAt })
+        .eq('temp_session_id', session.temp_session_id);
+
+      if (renewError) {
+        console.warn("ATTENDANCE_DEBUG: Failed to extend session expiration:", renewError.message);
+        // Don't fail the attendance - just log it
+      } else {
+        console.log("ATTENDANCE_DEBUG: ✅ Session extended successfully");
+      }
     }
 
     // 4. Laboratory QR Verification (Dual Layer)

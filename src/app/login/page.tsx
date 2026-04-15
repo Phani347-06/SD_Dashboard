@@ -224,6 +224,12 @@ export default function LoginPage() {
           if (role === 'student') {
              const expires_at = new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString(); // Increased to 4 hours for stability
              
+             console.log("🔐 Creating student session", {
+               temp_session_id: temp_session_id.slice(0, 8) + "...",
+               student_id: profile.id.slice(0, 8) + "...",
+               expires_at
+             });
+             
              // 5.1 🧹 INSTITUTIONAL CLEANUP: Deactivate legacy sessions
              // Ensure only ONE session node is active per student at any given time.
              await supabase
@@ -242,11 +248,20 @@ export default function LoginPage() {
              });
 
              if (sessionError) {
-                console.error("CRITICAL: SECURITY_MATRIX_FAILURE", sessionError);
+                console.error("CRITICAL: SESSION_INSERT_FAILURE", sessionError);
                 throw new Error(`Security Matrix Manifestation Failure: [${sessionError.code}] ${sessionError.message}`);
              }
 
+             console.log("✅ Session created successfully");
+
              // 5.3 Sync memory-only nodes (Deter persistence)
+             // Store fingerprint hash so refreshSession() always uses the same one
+             if (typeof window !== 'undefined' && window.sessionStorage) {
+               window.sessionStorage.setItem('__lab_sess_id', temp_session_id);
+               window.sessionStorage.setItem('__lab_fingerprint_hash', fingerprintHash);
+               console.log("✅ Session credentials stored in sessionStorage");
+             }
+             
              setSession(temp_session_id, fingerprintHash);
              setSuccessMsg("System Access Granted: Previous session ended. You are now signed in on this device.");
 

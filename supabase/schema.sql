@@ -5,6 +5,7 @@ DROP TABLE IF EXISTS public.attendance_logs CASCADE;
 DROP TABLE IF EXISTS public.temp_qr_sessions CASCADE;
 DROP TABLE IF EXISTS public.class_sessions CASCADE;
 DROP TABLE IF EXISTS public.lab_students CASCADE;
+DROP TABLE IF EXISTS public.sessions CASCADE;
 DROP TABLE IF EXISTS public.labs CASCADE;
 DROP TABLE IF EXISTS public.students CASCADE;
 
@@ -31,6 +32,18 @@ CREATE TABLE public.students (
     current_session_token UUID, -- The temp_session_id for the current login
     last_ping TIMESTAMP WITH TIME ZONE,
     
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 2.5 Sessions Table (Student Security Session Nodes)
+-- Tracks active login sessions with fingerprint binding and expiration
+CREATE TABLE public.sessions (
+    temp_session_id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    student_id UUID NOT NULL REFERENCES public.students(id) ON DELETE CASCADE,
+    fingerprint_hash VARCHAR(255) NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    attendance_submitted BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -107,6 +120,12 @@ CREATE INDEX idx_class_sessions_lab_id ON public.class_sessions(lab_id);
 CREATE INDEX idx_class_sessions_status ON public.class_sessions(status);
 CREATE INDEX idx_beacon_id ON public.beacon_telemetry(beacon_id);
 CREATE INDEX idx_last_heartbeat ON public.beacon_telemetry(last_heartbeat DESC);
+-- Sessions table indexes for efficient session lookup and recovery
+CREATE INDEX idx_sessions_temp_session_id ON public.sessions(temp_session_id);
+CREATE INDEX idx_sessions_student_id ON public.sessions(student_id);
+CREATE INDEX idx_sessions_fingerprint_hash ON public.sessions(fingerprint_hash);
+CREATE INDEX idx_sessions_is_active_expires ON public.sessions(is_active, expires_at DESC);
+CREATE INDEX idx_sessions_student_fingerprint_active ON public.sessions(student_id, fingerprint_hash, is_active);
 
 -- Important Security Notes:
 -- Enabling Row Level Security (RLS) policies 

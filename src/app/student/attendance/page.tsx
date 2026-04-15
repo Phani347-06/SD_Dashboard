@@ -464,14 +464,15 @@ export default function AttendancePage() {
                 }
             }
 
-            // 🚀 UPI Refinement: OPTIMISTIC TRANSITION
-            setLocalTxState('SUCCESS');
-
+            // 🚀 Submit to Backend & Await Confirmation (No Premature Success)
+            setLocalTxState('VERIFYING');
             const isSubmitted = await handleSubmitAttendance(data);
 
             // If submission failed, handleSubmitAttendance already set the error and localTxState to ERROR.
             // We only proceed to CONFIRMED if it actually succeeded.
             if (isSubmitted) {
+                // Backend confirmed - NOW we set SUCCESS
+                setLocalTxState('SUCCESS');
                 setTimeout(() => setStatus('CONFIRMED'), 800);
             } else {
                 // Return local state to IDLE after a delay if submission failed but didn't throw
