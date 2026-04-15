@@ -273,10 +273,18 @@ export async function POST(req: Request) {
       }, { status: 403 });
     }
 
-    // 5. Duplicate Submission Prevention
-    if (session.attendance_submitted) {
-      console.log("ATTENDANCE_DEBUG: Attendance already manifested for student.");
-      return NextResponse.json({ error: 'Attendance already Manifested for this session node.' }, { status: 400 });
+    // 5. Context-Aware Duplicate Submission Prevention
+    // Instead of a global session lock, we check if attendance exists FOR THIS SPECIFIC CLASS.
+    const { data: existingLog } = await db
+      .from('attendance_logs')
+      .select('id')
+      .eq('student_id', session.student_id)
+      .eq('class_session_id', class_session_id)
+      .maybeSingle();
+
+    if (existingLog) {
+      console.log("ATTENDANCE_DEBUG: Attendance already manifested for this specific class.");
+      return NextResponse.json({ error: 'Attendance already Manifested for this Class Session.' }, { status: 400 });
     }
 
     // 6. Enrollment Verification (Final Gate)
@@ -323,17 +331,12 @@ export async function POST(req: Request) {
       throw logError;
     }
 
-    // 8. Update Session State (Atomic Verification)
-    const { error: updateError } = await (supabaseAdmin || supabase)
+    // 8. Update Session State (Informational Only)
+    // We no longer block further scans based on this flag, but we keep it for legacy UI compatibility.
+    await (supabaseAdmin || supabase)
       .from('sessions')
       .update({ attendance_submitted: true })
       .eq('temp_session_id', session.temp_session_id);
-
-    if (updateError) {
-       console.log("ATTENDANCE_DEBUG: Session Update Failure. Rolling back log record...");
-       await (supabaseAdmin || supabase).from('attendance_logs').delete().eq('id', logData.id);
-       return NextResponse.json({ error: 'System inconsistency during state commit.' }, { status: 500 });
-    }
 
     // 9. Institutional Receipt Dispatch (Resend Node)
     try {

@@ -61,7 +61,7 @@ export default function Dashboard() {
                     .from('attendance_logs')
                     .select(`
                         id,
-                        status,
+                        final_status,
                         session_id,
                         scanned_at,
                         class_sessions (
@@ -76,7 +76,7 @@ export default function Dashboard() {
                 // 4. Calculate Analytics
                 const processedLogs = rawLogs as any[] || [];
                 const processedSessions = rawSessions as any[] || [];
-                const attendedSessions = processedLogs?.filter(l => l.status === 'PRESENT') || [];
+                const attendedSessions = processedLogs?.filter(l => l.final_status === 'VERIFIED') || [];
                 const totalSessionsCount = processedSessions?.length || 0;
                 const attendanceRate = totalSessionsCount > 0 ? Math.round((attendedSessions.length / totalSessionsCount) * 100) : 0;
 
@@ -93,8 +93,8 @@ export default function Dashboard() {
                         type: "ATTENDANCE",
                         title: `${log.class_sessions?.labs?.name || log.class_sessions?.course_code || 'Lab Node'} Handshake`,
                         time: new Date(log.scanned_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-                        status: log.status === 'PRESENT' ? 'VERIFIED' : 'ABSENT',
-                        color: log.status === 'PRESENT' ? 'blue' : 'red'
+                        status: log.final_status === 'VERIFIED' ? 'VERIFIED' : 'PENDING',
+                        color: log.final_status === 'VERIFIED' ? 'blue' : 'red'
                     })));
                 }
 
