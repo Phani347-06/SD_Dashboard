@@ -250,12 +250,12 @@ export async function POST(req: Request) {
     }
 
     // ⏳ CHRONOLOGICAL RIGIDITY CHECK
-    const expiresAt = new Date(qrSession.expires_at).getTime();
-    const now = Date.now();
+    const qrExpiresAtMs = new Date(qrSession.expires_at).getTime();
+    const currentTimeMs = Date.now();
     const graceWindow = 120000; // 120s (2m) grace period for synchronized rotation & clock drift
 
     // Removed is_active check as per Hard Deletion Protocol
-    if (now > (expiresAt + graceWindow)) {
+    if (currentTimeMs > (qrExpiresAtMs + graceWindow)) {
         console.log("ATTENDANCE_DEBUG: QR Token stale beyond grace window.");
         return NextResponse.json({ error: 'QR Signature Expired: Please scan the refreshed matrix.' }, { status: 403 });
     }
